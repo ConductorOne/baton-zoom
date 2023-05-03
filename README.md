@@ -11,7 +11,6 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 2. Scopes: 
   - user:read:admin
   - account:read:admin
-  - imchat:read:admin
   - contact_group:read:admin
   - imgroup:read:admin
   - group:read:admin
