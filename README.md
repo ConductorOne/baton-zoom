@@ -49,7 +49,7 @@ baton resources
 `baton-zoom` pulls down information about the following Zoom resources:
 - Users
 - Groups
-- IM Groups
+- Contact Groups
 - Roles
 
 # Contributing, Support, and Issues
