@@ -66,6 +66,7 @@ func New(ctx context.Context, accountId string, clientId string, clientSecret st
 func (z *Zoom) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "Zoom",
+		Description: "Connector syncing users, groups, roles and contact groups from Zoom to Baton.",
 	}, nil
 }
 
