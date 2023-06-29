@@ -11,6 +11,8 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 var entitlements = []string{
@@ -142,6 +144,64 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 	}
 
 	return rv, "", nil, nil
+}
+
+func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"baton-zoom: only users can be granted group membership",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("baton-zoom: only users can be granted group membership")
+	}
+
+	if entitlement.Slug == memberEntitlement {
+		err := g.client.AddGroupMembers(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
+		}
+		return nil, nil
+	} else {
+		err := g.client.AddGroupAdmins(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
+		}
+	}
+
+	return nil, nil
+}
+
+func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
+
+	entitlement := grant.Entitlement
+	principal := grant.Principal
+
+	if principal.Id.ResourceType != resourceTypeUser.Id {
+		l.Warn(
+			"baton-zoom: only users can have role membership revoked",
+			zap.String("principal_type", principal.Id.ResourceType),
+			zap.String("principal_id", principal.Id.Resource),
+		)
+		return nil, fmt.Errorf("baton-zoom: only users can have group membership revoked")
+	}
+
+	if entitlement.Slug == memberEntitlement {
+		err := g.client.DeleteGroupMember(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("baton-zoom: failed to remove group member: %w", err)
+		}
+	} else {
+		err := g.client.DeleteGroupAdmin(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("baton-zoom: failed to remove group admin: %w", err)
+		}
+	}
+
+	return nil, nil
 }
 
 func groupBuilder(client *zoom.Client) *groupResourceType {
