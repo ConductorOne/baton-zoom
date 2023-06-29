@@ -308,7 +308,7 @@ func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) er
 	return nil
 }
 
-// AddGroupAdmins adds an adming to the group.
+// AddGroupAdmins adds admin to the group.
 func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) error {
 	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/admins")
 	members := []Payload{

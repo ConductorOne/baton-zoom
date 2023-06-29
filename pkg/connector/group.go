@@ -167,7 +167,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	} else {
 		err := g.client.AddGroupAdmins(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
-			return nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
+			return nil, fmt.Errorf("baton-zoom: failed to add admin to group: %w", err)
 		}
 	}
 
