@@ -1,6 +1,6 @@
-module github.com/ConductorOne/baton-zoom
+module github.com/conductorone/baton-zoom
 
-go 1.19
+go 1.20
 
 require (
 	github.com/conductorone/baton-sdk v0.1.0
