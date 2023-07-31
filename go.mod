@@ -1,4 +1,4 @@
-module github.com/ConductorOne/baton-zoom
+module github.com/conductorone/baton-zoom
 
 go 1.19
 
