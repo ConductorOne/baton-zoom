@@ -81,3 +81,9 @@ func parseResp(resp *http.Response) (annotations.Annotations, error) {
 
 	return annos, nil
 }
+
+func annotationsForUserResourceType() annotations.Annotations {
+	annos := annotations.Annotations{}
+	annos.Update(&v2.SkipEntitlementsAndGrants{})
+	return annos
+}
