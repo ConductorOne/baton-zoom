@@ -70,21 +70,22 @@ Usage:
   baton-zoom [command]
 
 Available Commands:
+  capabilities       Get connector capabilities
   completion         Generate the autocompletion script for the specified shell
   help               Help about any command
 
 Flags:
-      --account-id string             Account ID used to generate token providing access to Zoom API. ($BATON_ACCOUNT_ID)
-      --client-id string              The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
-      --client-secret string          The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
-  -f, --file string                   The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
-  -h, --help                          help for baton-zoom
-      --log-format string             The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
-      --log-level string              The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
-  -v, --version                       version for baton-zoom
-      --zoom-client-id string         Client ID used to generate token providing access to Zoom API. ($BATON_ZOOM_CLIENT_ID)
-      --zoom-client-secret string     Client Secret used to generate token providing access to Zoom API. ($BATON_ZOOM_CLIENT_SECRET)
+      --account-id string           Account ID used to generate token providing access to Zoom API. ($BATON_ACCOUNT_ID)
+      --client-id string            The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
+      --client-secret string        The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
+  -f, --file string                 The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
+  -h, --help                        help for baton-zoom
+      --log-format string           The output format for logs: json, console ($BATON_LOG_FORMAT) (default "json")
+      --log-level string            The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
+  -p, --provisioning                This must be set in order for provisioning actions to be enabled. ($BATON_PROVISIONING)
+  -v, --version                     version for baton-zoom
+      --zoom-client-id string       Client ID used to generate token providing access to Zoom API. ($BATON_ZOOM_CLIENT_ID)
+      --zoom-client-secret string   Client Secret used to generate token providing access to Zoom API. ($BATON_ZOOM_CLIENT_SECRET)
 
 Use "baton-zoom [command] --help" for more information about a command.
-
 ```
