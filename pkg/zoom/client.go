@@ -1,9 +1,11 @@
 package zoom
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -27,6 +29,10 @@ func NewClient(httpClient *http.Client, token string) *Client {
 		httpClient: httpClient,
 		token:      token,
 	}
+}
+
+type Payload struct {
+	ID string `json:"id"`
 }
 
 type PaginationData struct {
@@ -89,7 +95,7 @@ func (c *Client) GetUsers(ctx context.Context, nextToken string) ([]User, string
 	}
 
 	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, q)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -110,7 +116,7 @@ func (c *Client) GetGroups(ctx context.Context, nextToken string) ([]Group, stri
 	}
 
 	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, q)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -131,7 +137,7 @@ func (c *Client) GetContactGroups(ctx context.Context, nextToken string) ([]Cont
 	}
 
 	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, q)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -150,7 +156,7 @@ func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
 		Roles []Role `json:"roles"`
 	}
 
-	resp, err := c.doRequest(ctx, url, &res, nil)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -171,7 +177,7 @@ func (c *Client) GetGroupMembers(ctx context.Context, groupId string) ([]User, e
 		}
 
 		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, q)
+		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +207,7 @@ func (c *Client) GetGroupAdmins(ctx context.Context, groupId string) ([]User, er
 		}
 
 		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, q)
+		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +233,7 @@ func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nex
 	}
 
 	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, q)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -248,7 +254,7 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 	}
 
 	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, q)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -265,7 +271,7 @@ func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Respon
 	url := fmt.Sprint(baseUrl, "/users/", userId)
 	var res User
 
-	resp, err := c.doRequest(ctx, url, &res, nil)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
 	if err != nil {
 		return User{}, nil, err
 	}
@@ -273,8 +279,138 @@ func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Respon
 	return res, resp, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, url string, res interface{}, params url.Values) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// AddGroupMembers adds user to a group.
+func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/members")
+	members := []Payload{
+		{
+			ID: userId,
+		},
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"members": members,
+	})
+	if err != nil {
+		return err
+	}
+
+	var res struct {
+		MemberIds []string `json:"member_ids"`
+	}
+	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
+	if e != nil {
+		return e
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+// AddGroupAdmins adds admin to the group.
+func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/admins")
+	members := []Payload{
+		{
+			ID: userId,
+		},
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"admins": members,
+	})
+	if err != nil {
+		return err
+	}
+
+	var res struct {
+		MemberIds []string `json:"member_ids"`
+	}
+	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
+	if e != nil {
+		return e
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+// DeleteGroupAdmin removes admin from the group.
+func (c *Client) DeleteGroupAdmin(ctx context.Context, groupId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/admins/", userId)
+
+	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+// DeleteGroupMember removes member from the group.
+func (c *Client) DeleteGroupMember(ctx context.Context, groupId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/members/", userId)
+
+	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+// AssignRole assigns role to a user.
+func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/roles/", roleId, "/members")
+	members := []Payload{
+		{
+			ID: userId,
+		},
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"members": members,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	var res struct {
+		AddAt string `json:"add_at"`
+		IDS   string `json:"ids"`
+	}
+	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
+	if e != nil {
+		return e
+	}
+
+	defer resp.Body.Close()
+	return nil
+}
+
+// UnassignRole unassigns role from a user.
+func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error {
+	url := fmt.Sprint(baseUrl, "/roles/", roleId, "/members/", userId)
+
+	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	return nil
+}
+
+func (c *Client) doRequest(ctx context.Context, url string, res interface{}, method string, params url.Values, payload []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +419,8 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, par
 		req.URL.RawQuery = params.Encode()
 	}
 
-	req.Header.Add("accept", "application/json")
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", c.token))
 
 	resp, err := c.httpClient.Do(req)
@@ -293,7 +430,20 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, par
 
 	defer resp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(b) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return resp, nil
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("request failed with status code %d: %s", resp.StatusCode, string(b))
+	}
+
+	if err := json.Unmarshal(b, &res); err != nil {
 		return nil, err
 	}
 

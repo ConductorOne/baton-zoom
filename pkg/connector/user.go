@@ -37,6 +37,8 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		userStatus = v2.UserTrait_Status_STATUS_DISABLED
 	case "active":
 		userStatus = v2.UserTrait_Status_STATUS_ENABLED
+	default:
+		userStatus = v2.UserTrait_Status_STATUS_UNSPECIFIED
 	}
 
 	userTraitTraitOptions := []resource.UserTraitOption{

@@ -19,6 +19,7 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
+		Annotations: annotationsForUserResourceType(),
 	}
 	resourceTypeGroup = &v2.ResourceType{
 		Id:          "group",
