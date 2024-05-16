@@ -296,7 +296,7 @@ func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) er
 	}
 
 	var res struct {
-		MemberIds []string `json:"member_ids"`
+		MemberIDs []string `json:"member_ids"`
 	}
 	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
 	if e != nil {
@@ -325,7 +325,7 @@ func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) err
 	}
 
 	var res struct {
-		MemberIds []string `json:"member_ids"`
+		MemberIDs []string `json:"member_ids"`
 	}
 	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
 	if e != nil {
@@ -384,7 +384,7 @@ func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
 
 	var res struct {
 		AddAt string `json:"add_at"`
-		IDS   string `json:"ids"`
+		IDs   string `json:"ids"`
 	}
 	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
 	if e != nil {
