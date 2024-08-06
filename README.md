@@ -21,6 +21,8 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 Scopes for provisioning (grant/revoke)
 - role:write:member:admin
 - role:delete:member:admin
+- group:write:member:admin
+- group:delete:member:admin
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
