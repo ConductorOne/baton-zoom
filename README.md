@@ -9,14 +9,13 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 
 1. Zoom [server to server app](https://developers.zoom.us/docs/internal-apps/create/) created in [marketplace](https://marketplace.zoom.us/)
 2. Scopes:
-- user:read:admin
-- account:read:admin
-- contact_group:read:admin
-- imgroup:read:admin
-- group:read:admin
-- group:write:admin
-- role:read:admin
-- role:write:admin
+- contact_group:read:list_groups:admin
+- contact:read:list_contacts:admin
+- group:read:list_groups:admin
+- role:read:list_roles:admin
+- role:read:list_members:admin
+- user:read:user:admin
+- user:read:list_users:admin
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
