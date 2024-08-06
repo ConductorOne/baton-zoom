@@ -8,15 +8,21 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 ## Prerequisites
 
 1. Zoom [server to server app](https://developers.zoom.us/docs/internal-apps/create/) created in [marketplace](https://marketplace.zoom.us/)
-2. Scopes:
-- user:read:admin
-- account:read:admin
-- contact_group:read:admin
-- imgroup:read:admin
-- group:read:admin
-- group:write:admin
-- role:read:admin
-- role:write:admin
+2. Scopes for syncing only(no provisioning):
+- contact_group:read:list_groups:admin
+- group:read:list_groups:admin
+- group:read:list_members:admin
+- group:read:administrator:admin
+- role:read:list_roles:admin
+- role:read:list_members:admin
+- user:read:user:admin
+- user:read:list_users:admin
+
+Scopes for provisioning (grant/revoke)
+- role:write:member:admin
+- role:delete:member:admin
+- group:write:member:admin
+- group:delete:member:admin
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
