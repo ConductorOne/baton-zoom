@@ -10,7 +10,6 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 1. Zoom [server to server app](https://developers.zoom.us/docs/internal-apps/create/) created in [marketplace](https://marketplace.zoom.us/)
 2. Scopes:
 - contact_group:read:list_groups:admin
-- contact:read:list_contacts:admin
 - group:read:list_groups:admin
 - role:read:list_roles:admin
 - role:read:list_members:admin
