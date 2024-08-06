@@ -40,6 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BATON_LOG_LEVEL: debug
+      BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
+      BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
+      BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
       CONNECTOR_GRANT: 'group:zjg1idFWQt25Ohhr7752Wg:member:user:7czGQEusRh2IasXfsdDh_Q'
       CONNECTOR_ENTITLEMENT: 'group:zjg1idFWQt25Ohhr7752Wg:member'
       CONNECTOR_PRINCIPAL: 'user'
