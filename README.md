@@ -8,7 +8,7 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 ## Prerequisites
 
 1. Zoom [server to server app](https://developers.zoom.us/docs/internal-apps/create/) created in [marketplace](https://marketplace.zoom.us/)
-2. Scopes:
+2. Scopes for syncing only(no provisioning):
 - contact_group:read:list_groups:admin
 - group:read:list_groups:admin
 - role:read:list_roles:admin
