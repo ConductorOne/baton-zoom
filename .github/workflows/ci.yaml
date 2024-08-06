@@ -59,7 +59,7 @@ jobs:
       - name: Build baton-zoom
         run: go build ./cmd/baton-zoom
       - name: Run baton-zoom
-        run: ./baton-zoom --account-id BATON_ACCOUNT_ID --zoom-client-id 'zL2AEoiUS5CGLtR5CVZgdA' --zoom-client-secret BATON_ZOOM_CLIENT_SECRET
+        run: BATON_ACCOUNT_ID='vLa_mb6MQliljoczREintw' ./baton-zoom 
       # - name: Revoke grant
       #   run: ./baton-zoom --revoke-grant "${{ env.CONNECTOR_GRANT }}"
       # - name: Check grant was revoked
