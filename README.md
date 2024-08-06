@@ -11,6 +11,8 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 2. Scopes for syncing only(no provisioning):
 - contact_group:read:list_groups:admin
 - group:read:list_groups:admin
+- group:read:list_members:admin
+- group:read:administrator:admin
 - role:read:list_roles:admin
 - role:read:list_members:admin
 - user:read:user:admin
