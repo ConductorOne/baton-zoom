@@ -45,8 +45,8 @@ jobs:
       BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
       CONNECTOR_GRANT: 'group:zjg1idFWQt25Ohhr7752Wg:member:user:7czGQEusRh2IasXfsdDh_Q'
       CONNECTOR_ENTITLEMENT: 'group:zjg1idFWQt25Ohhr7752Wg:member'
-      CONNECTOR_PRINCIPAL: 'user'
-      CONNECTOR_PRINCIPAL_TYPE: '7czGQEusRh2IasXfsdDh_Q'
+      CONNECTOR_PRINCIPAL: '7czGQEusRh2IasXfsdDh_Q'
+      CONNECTOR_PRINCIPAL_TYPE: 'user'
     steps:
       - name: Install Go
         uses: actions/setup-go@v4
