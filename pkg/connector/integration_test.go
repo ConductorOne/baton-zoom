@@ -8,6 +8,7 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,12 +19,22 @@ var (
 	clientSecret = os.Getenv("BATON_ZOOM_CLIENT_SECRET")
 )
 
+// This test assumes there is a local.env file.
 func TestUserResourceTypeList(t *testing.T) {
 	if clientID == "" && clientSecret == "" && accountID == "" {
 		t.Skip()
 	}
 
-	cli, err := getClientForTesting(ctx)
+	viper.AddConfigPath("../../")
+	viper.SetConfigName("local")
+	viper.SetConfigType("env")
+	viper.AutomaticEnv()
+	err := viper.ReadInConfig()
+	if err != nil {
+		t.Fail()
+	}
+
+	cli, err := getClientForTesting(ctx, viper.GetViper())
 	assert.Nil(t, err)
 
 	user := &userResourceType{
@@ -35,8 +46,8 @@ func TestUserResourceTypeList(t *testing.T) {
 	assert.NotNil(t, rs)
 }
 
-func getClientForTesting(ctx context.Context) (*zoom.Client, error) {
-	cli, err := New(ctx, accountID, clientID, clientSecret)
+func getClientForTesting(ctx context.Context, cfg *viper.Viper) (*zoom.Client, error) {
+	cli, err := New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
