@@ -16,21 +16,15 @@ import (
 )
 
 const (
-	version           = "dev"
-	connectorName     = "baton-zoom"
-	batonCacheDisable = "cache-disable"
-	batonCacheTTL     = "cache-ttl"
-	batonCacheMaxSize = "cache-max-size"
+	version       = "dev"
+	connectorName = "baton-zoom"
 )
 
 var (
 	accountId           = field.StringField(connector.AccountId, field.WithRequired(true), field.WithDescription("Account ID used to generate token providing access to Zoom API."))
 	zoomClientId        = field.StringField(connector.ZoomClientId, field.WithRequired(true), field.WithDescription("Client ID used to generate token providing access to Zoom API."))
 	zoomClientSecret    = field.StringField(connector.ZoomClientSecret, field.WithRequired(true), field.WithDescription("Client Secret used to generate token providing access to Zoom API."))
-	CacheDisabled       = field.StringField(batonCacheDisable, field.WithRequired(false), field.WithDescription("Verbose mode shows information about new memory allocation."))
-	CacheTTL            = field.StringField(batonCacheTTL, field.WithRequired(false), field.WithDescription("Time after which entry can be evicted."))
-	CacheMaxSize        = field.StringField(batonCacheMaxSize, field.WithRequired(false), field.WithDescription("It is a limit for BytesQueue size in MB."))
-	configurationFields = []field.SchemaField{accountId, zoomClientId, zoomClientSecret, CacheDisabled, CacheTTL, CacheMaxSize}
+	configurationFields = []field.SchemaField{accountId, zoomClientId, zoomClientSecret}
 )
 
 func main() {
