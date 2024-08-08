@@ -60,11 +60,11 @@ jobs:
         run: ./baton-zoom --log-level=debug
       - name: Install baton
         run: ./scripts/get-baton.sh && mv baton /usr/local/bin
-      # - name: Revoke grant
-      #   run: ./baton-zoom --revoke-grant "${{ env.CONNECTOR_GRANT }}"
-      # - name: Check grant was revoked
-      #   run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status "if .grants then .grants[]?.principal.id.resource != \"${{ env.CONNECTOR_PRINCIPAL }}\" else . end"
-      # - name: Grant entitlement
-      #   run: ./baton-zoom --grant-entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --grant-principal "${{ env.CONNECTOR_PRINCIPAL }}" --grant-principal-type "${{ env.CONNECTOR_PRINCIPAL_TYPE }}"
-      # - name: Check grant was granted
-      #   run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status ".grants[].principal.id.resource == \"${{ env.CONNECTOR_PRINCIPAL }}\""
+      - name: Revoke grant
+        run: ./baton-zoom --revoke-grant "${{ env.CONNECTOR_GRANT }}"
+      - name: Check grant was revoked
+        run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status "if .grants then .grants[]?.principal.id.resource != \"${{ env.CONNECTOR_PRINCIPAL }}\" else . end"
+      - name: Grant entitlement
+        run: ./baton-zoom --grant-entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --grant-principal "${{ env.CONNECTOR_PRINCIPAL }}" --grant-principal-type "${{ env.CONNECTOR_PRINCIPAL_TYPE }}"
+      - name: Check grant was granted
+        run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status ".grants[].principal.id.resource == \"${{ env.CONNECTOR_PRINCIPAL }}\""
