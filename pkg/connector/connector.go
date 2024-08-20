@@ -10,6 +10,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -44,11 +45,22 @@ var (
 	}
 )
 
+const (
+	AccountId        = "account-id"
+	ZoomClientId     = "zoom-client-id"
+	ZoomClientSecret = "zoom-client-secret" // #nosec G101
+)
+
 type Zoom struct {
 	client *zoom.Client
 }
 
-func New(ctx context.Context, accountId string, clientId string, clientSecret string) (*Zoom, error) {
+func New(ctx context.Context, cfg *viper.Viper) (*Zoom, error) {
+	var (
+		accountId    = cfg.GetString(AccountId)
+		clientId     = cfg.GetString(ZoomClientId)
+		clientSecret = cfg.GetString(ZoomClientSecret)
+	)
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
