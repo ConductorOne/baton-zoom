@@ -20,19 +20,12 @@ const (
 	connectorName = "baton-zoom"
 )
 
-var (
-	accountId           = field.StringField(connector.AccountId, field.WithRequired(true), field.WithDescription("Account ID used to generate token providing access to Zoom API."))
-	zoomClientId        = field.StringField(connector.ZoomClientId, field.WithRequired(true), field.WithDescription("Client ID used to generate token providing access to Zoom API."))
-	zoomClientSecret    = field.StringField(connector.ZoomClientSecret, field.WithRequired(true), field.WithDescription("Client Secret used to generate token providing access to Zoom API."))
-	configurationFields = []field.SchemaField{accountId, zoomClientId, zoomClientSecret}
-)
-
 func main() {
 	ctx := context.Background()
 	_, cmd, err := configSchema.DefineConfiguration(ctx,
 		connectorName,
 		getConnector,
-		field.NewConfiguration(configurationFields),
+		field.NewConfiguration(ConfigurationFields),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -47,9 +40,15 @@ func main() {
 	}
 }
 
-func getConnector(ctx context.Context, cfg *viper.Viper) (types.ConnectorServer, error) {
+func getConnector(ctx context.Context, v *viper.Viper) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
-	cb, err := connector.New(ctx, cfg)
+
+	cb, err := connector.New(
+		ctx,
+		v.GetString(AccountIdField.FieldName),
+		v.GetString(ZoomClientIdField.FieldName),
+		v.GetString(ZoomClientSecretField.FieldName),
+	)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
 		return nil, err
