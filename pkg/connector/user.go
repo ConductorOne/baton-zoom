@@ -161,7 +161,7 @@ func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, err
 	if !ok || email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
-	
+
 	firstName, ok := pMap["first_name"].(string)
 	if !ok || firstName == "" {
 		return nil, fmt.Errorf("first name is required")
@@ -199,10 +199,11 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 		return nil, err
 	}
 
-	_, _, err = u.client.GetUser(ctx, userID)
+	_, resp, err := u.client.GetUser(ctx, userID)
 	if err == nil || status.Code(err) != codes.NotFound {
 		return nil, fmt.Errorf("error deleting user. User %s still exists", userID)
 	}
+	defer resp.Body.Close()
 
 	return nil, nil
 }

@@ -421,11 +421,12 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 	}
 
 	var res UserCreationResponse
-	_, err = c.doRequest(ctx, requestURL, &res, http.MethodPost, nil, requestBody)
+	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodPost, nil, requestBody)
 	if err != nil {
 		return nil, err
 	}
 
+	defer resp.Body.Close()
 	return &res, nil
 }
 
@@ -435,11 +436,12 @@ func (c *Client) DeleteUser(ctx context.Context, userId string) error {
 		return err
 	}
 
-	_, err = c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
 	if err != nil {
 		return err
 	}
 
+	defer resp.Body.Close()
 	return nil
 }
 
