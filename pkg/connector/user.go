@@ -2,12 +2,16 @@ package connector
 
 import (
 	"context"
+	"fmt"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type userResourceType struct {
@@ -100,12 +104,107 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, to
 	return rv, pageToken, annos, nil
 }
 
-func (u *userResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	return nil, "", nil, nil
 }
 
-func (u *userResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (u *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	return nil, "", nil, nil
+}
+
+func (u *userResourceType) CreateAccountCapabilityDetails(_ context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
+	return &v2.CredentialDetailsAccountProvisioning{
+		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
+			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+		},
+		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
+	}, nil, nil
+}
+
+func (u *userResourceType) CreateAccount(
+	ctx context.Context,
+	accountInfo *v2.AccountInfo,
+	_ *v2.CredentialOptions,
+) (connectorbuilder.CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error) {
+	newUserInfo, err := createNewUserInfo(accountInfo)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	newUser, err := u.client.CreateUser(ctx, newUserInfo)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	userResource, err := userResource(zoom.User{
+		ID:        newUser.Id,
+		FirstName: newUser.FirstName,
+		LastName:  newUser.LastName,
+		Email:     newUser.Email,
+		Type:      newUser.Type,
+	}, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	caResponse := &v2.CreateAccountResponse_SuccessResult{
+		Resource: userResource,
+	}
+
+	return caResponse, nil, nil, nil
+}
+
+func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, error) {
+	pMap := accountInfo.Profile.AsMap()
+
+	email, ok := pMap["email"].(string)
+	if !ok || email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+	
+	firstName, ok := pMap["first_name"].(string)
+	if !ok || firstName == "" {
+		return nil, fmt.Errorf("first name is required")
+	}
+
+	lastName, ok := pMap["last_name"].(string)
+	if !ok || lastName == "" {
+		return nil, fmt.Errorf("last name is required")
+	}
+
+	displayName, ok := pMap["display_name"].(string)
+	if !ok || displayName == "" {
+		return nil, fmt.Errorf("display name is required")
+	}
+
+	newUserInfo := &zoom.UserCreationBody{
+		Action: zoom.CreateUser,
+		UserInfo: zoom.UserCreationInfo{
+			Type:        zoom.BasicUser,
+			FirstName:   firstName,
+			LastName:    lastName,
+			Email:       email,
+			DisplayName: displayName,
+		},
+	}
+
+	return newUserInfo, nil
+}
+
+func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId) (annotations.Annotations, error) {
+	userID := principal.Resource
+
+	err := u.client.DeleteUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	_, _, err = u.client.GetUser(ctx, userID)
+	if err == nil || status.Code(err) != codes.NotFound {
+		return nil, fmt.Errorf("error deleting user. User %s still exists", userID)
+	}
+
+	return nil, nil
 }
 
 func userBuilder(client *zoom.Client) *userResourceType {
