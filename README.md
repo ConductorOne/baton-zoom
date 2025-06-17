@@ -23,6 +23,8 @@ Scopes for provisioning (grant/revoke)
 - role:delete:member:admin
 - group:write:member:admin
 - group:delete:member:admin
+- user:write:user:admin
+- user:delete:user:admin
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
