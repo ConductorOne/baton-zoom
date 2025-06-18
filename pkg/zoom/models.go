@@ -76,11 +76,6 @@ type UserCreationInfo struct {
 	DisplayName string `json:"display_name"`
 	// Password    string   `json:"password"`
 	Type UserType `json:"type"`
-	// Feature     struct {
-	//	ZoomPhone   bool `json:"zoom_phone"`
-	//	ZoomOneType int  `json:"zoom_one_type"`
-	// } `json:"feature"`
-	// PlanUnitedType string `json:"plan_united_type"`
 }
 
 type UserCreationResponse struct {
