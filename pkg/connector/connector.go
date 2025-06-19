@@ -69,10 +69,54 @@ func New(
 	}, nil
 }
 
-func (z *Zoom) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
+func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "Zoom",
 		Description: "Connector syncing users, groups, roles and contact groups from Zoom to Baton.",
+		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
+			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
+				"email": {
+					DisplayName: "Email",
+					Required:    true,
+					Description: "This email will be used as the login for the user.",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "john.doe@example.com",
+					Order:       1,
+				},
+				"first_name": {
+					DisplayName: "First Name",
+					Required:    true,
+					Description: "First name of the person who will own the user.",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "John",
+					Order:       2,
+				},
+				"last_name": {
+					DisplayName: "Last Name",
+					Required:    true,
+					Description: "Last name of the person who will own the user.",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "Doe",
+					Order:       3,
+				},
+				"display_name": {
+					DisplayName: "Display Name",
+					Required:    true,
+					Description: "This is the name that will be displayed on the new account.",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "John Doe",
+					Order:       4,
+				},
+			},
+		},
 	}, nil
 }
 

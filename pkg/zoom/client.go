@@ -409,6 +409,42 @@ func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error 
 	return nil
 }
 
+func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*UserCreationResponse, error) {
+	requestURL, err := url.JoinPath(baseUrl, "users")
+	if err != nil {
+		return nil, err
+	}
+
+	requestBody, err := json.Marshal(newUser)
+	if err != nil {
+		return nil, err
+	}
+
+	var res UserCreationResponse
+	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodPost, nil, requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	return &res, nil
+}
+
+func (c *Client) DeleteUser(ctx context.Context, userId string) error {
+	requestURL, err := url.JoinPath(baseUrl, "users", userId)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+	return nil
+}
+
 func (c *Client) doRequest(ctx context.Context, url string, res interface{}, method string, params url.Values, payload []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
