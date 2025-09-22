@@ -124,7 +124,7 @@ func (u *userResourceType) CreateAccountCapabilityDetails(_ context.Context) (*v
 func (u *userResourceType) CreateAccount(
 	ctx context.Context,
 	accountInfo *v2.AccountInfo,
-	_ *v2.CredentialOptions,
+	_ *v2.LocalCredentialOptions,
 ) (connectorbuilder.CreateAccountResponse, []*v2.PlaintextData, annotations.Annotations, error) {
 	newUserInfo, err := createNewUserInfo(accountInfo)
 	if err != nil {
