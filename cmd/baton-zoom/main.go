@@ -35,6 +35,7 @@ func getConnector(ctx context.Context, cfg *config.Zoom, _ *cli.ConnectorOpts) (
 		cfg.ZoomClientId,
 		cfg.ZoomClientSecret,
 		cfg.SyncInactiveUsers,
+		cfg.BaseUrl,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("baton-zoom: error creating connector: %w", err)

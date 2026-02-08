@@ -16,18 +16,23 @@ import (
 type Client struct {
 	httpClient *http.Client
 	token      string
+	baseURL    string
 }
 
 const (
-	baseUrl          = "https://api.zoom.us/v2"
-	authUrl          = "https://zoom.us/oauth/token"
+	defaultBaseURL   = "https://api.zoom.us/v2"
+	defaultAuthURL   = "https://zoom.us/oauth/token"
 	resourcePageSize = "50"
 )
 
-func NewClient(httpClient *http.Client, token string) *Client {
+func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
 	return &Client{
 		httpClient: httpClient,
 		token:      token,
+		baseURL:    baseURL,
 	}
 }
 
@@ -60,7 +65,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	data.Add("account_id", accountId)
 	data.Add("grant_type", "account_credentials")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authUrl, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, defaultAuthURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +93,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 
 // GetUsers returns Zoom users filtered by status ("active", "inactive", or "pending").
 func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprint(baseUrl, "/users")
+	url := fmt.Sprint(c.baseURL, "/users")
 	var res struct {
 		PaginationData
 		Users []User `json:"users"`
@@ -110,7 +115,7 @@ func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) 
 
 // GetGroups returns all Zoom groups.
 func (c *Client) GetGroups(ctx context.Context, nextToken string) ([]Group, string, *http.Response, error) {
-	url := fmt.Sprint(baseUrl, "/groups")
+	url := fmt.Sprint(c.baseURL, "/groups")
 	var res struct {
 		PaginationData
 		Groups []Group `json:"groups"`
@@ -131,7 +136,7 @@ func (c *Client) GetGroups(ctx context.Context, nextToken string) ([]Group, stri
 
 // GetContactGroups returns all contact groups from Zoom.
 func (c *Client) GetContactGroups(ctx context.Context, nextToken string) ([]ContactGroup, string, *http.Response, error) {
-	url := fmt.Sprint(baseUrl, "/contacts/groups")
+	url := fmt.Sprint(c.baseURL, "/contacts/groups")
 	var res struct {
 		PaginationData
 		Groups []ContactGroup `json:"groups"`
@@ -152,7 +157,7 @@ func (c *Client) GetContactGroups(ctx context.Context, nextToken string) ([]Cont
 
 // GetRoles returns all Zoom roles.
 func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
-	url := fmt.Sprint(baseUrl, "/roles")
+	url := fmt.Sprint(c.baseURL, "/roles")
 	var res struct {
 		Roles []Role `json:"roles"`
 	}
@@ -167,7 +172,7 @@ func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
 
 // GetGroupMembers returns one page of Zoom group members.
 func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/groups/%s/members", baseUrl, groupId)
+	url := fmt.Sprintf("%s/groups/%s/members", c.baseURL, groupId)
 	var res struct {
 		PaginationData
 		Members []User `json:"members"`
@@ -184,7 +189,7 @@ func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken 
 
 // GetGroupAdmins returns one page of Zoom group admins.
 func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/groups/%s/admins", baseUrl, groupId)
+	url := fmt.Sprintf("%s/groups/%s/admins", c.baseURL, groupId)
 	var res struct {
 		PaginationData
 		Admins []User `json:"admins"`
@@ -201,7 +206,7 @@ func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken s
 
 // GetContactGroupMembers returns all Zoom contact group members.
 func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nextToken string) ([]GroupMember, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/contacts/groups/%s/members", baseUrl, groupId)
+	url := fmt.Sprintf("%s/contacts/groups/%s/members", c.baseURL, groupId)
 	var res struct {
 		PaginationData
 		Members []GroupMember `json:"group_members"`
@@ -222,7 +227,7 @@ func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nex
 
 // GetRoleMembers returns all Zoom role members.
 func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/roles/%s/members", baseUrl, roleId)
+	url := fmt.Sprintf("%s/roles/%s/members", c.baseURL, roleId)
 	var res struct {
 		PaginationData
 		Members []User `json:"members"`
@@ -243,7 +248,7 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	url := fmt.Sprint(baseUrl, "/users/", userId)
+	url := fmt.Sprint(c.baseURL, "/users/", userId)
 	var res User
 
 	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
@@ -256,7 +261,7 @@ func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Respon
 
 // AddGroupMembers adds user to a group.
 func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/members")
+	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/members")
 	members := []Payload{
 		{
 			ID: userId,
@@ -285,7 +290,7 @@ func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) er
 
 // AddGroupAdmins adds admin to the group.
 func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/admins")
+	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/admins")
 	members := []Payload{
 		{
 			ID: userId,
@@ -314,7 +319,7 @@ func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) err
 
 // DeleteGroupAdmin removes admin from the group.
 func (c *Client) DeleteGroupAdmin(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/admins/", userId)
+	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/admins/", userId)
 
 	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
 	if err != nil {
@@ -328,7 +333,7 @@ func (c *Client) DeleteGroupAdmin(ctx context.Context, groupId, userId string) e
 
 // DeleteGroupMember removes member from the group.
 func (c *Client) DeleteGroupMember(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/groups/", groupId, "/members/", userId)
+	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/members/", userId)
 
 	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
 	if err != nil {
@@ -342,7 +347,7 @@ func (c *Client) DeleteGroupMember(ctx context.Context, groupId, userId string) 
 
 // AssignRole assigns role to a user.
 func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/roles/", roleId, "/members")
+	url := fmt.Sprint(c.baseURL, "/roles/", roleId, "/members")
 	members := []Payload{
 		{
 			ID: userId,
@@ -372,7 +377,7 @@ func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
 
 // UnassignRole unassigns role from a user.
 func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error {
-	url := fmt.Sprint(baseUrl, "/roles/", roleId, "/members/", userId)
+	url := fmt.Sprint(c.baseURL, "/roles/", roleId, "/members/", userId)
 
 	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
 	if err != nil {
@@ -385,7 +390,7 @@ func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error 
 }
 
 func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*UserCreationResponse, error) {
-	requestURL, err := url.JoinPath(baseUrl, "users")
+	requestURL, err := url.JoinPath(c.baseURL, "users")
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +411,7 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 }
 
 func (c *Client) DeleteUser(ctx context.Context, userId string) error {
-	requestURL, err := url.JoinPath(baseUrl, "users", userId)
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
 		return err
 	}

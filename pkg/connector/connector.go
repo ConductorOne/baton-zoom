@@ -111,6 +111,7 @@ func New(
 	clientId string,
 	clientSecret string,
 	syncInactiveUsers bool,
+	baseURL string,
 ) (*Zoom, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
@@ -123,7 +124,7 @@ func New(
 	}
 
 	return &Zoom{
-		client:            zoom.NewClient(httpClient, token),
+		client:            zoom.NewClient(httpClient, token, baseURL),
 		syncInactiveUsers: syncInactiveUsers,
 	}, nil
 }

@@ -27,11 +27,18 @@ var (
 		field.WithDescription("Sync inactive Zoom users alongside active users."),
 		field.WithDisplayName("Sync Inactive Users"),
 	)
+	BaseURLField = field.StringField(
+		"base-url",
+		field.WithDescription("Override the Zoom API URL (for testing)"),
+		field.WithHidden(true),
+		field.WithExportTarget(field.ExportTargetCLIOnly),
+	)
 	ConfigurationFields = []field.SchemaField{
 		AccountIdField,
 		ZoomClientIdField,
 		ZoomClientSecretField,
 		SyncInactiveUsersField,
+		BaseURLField,
 	}
 )
 
