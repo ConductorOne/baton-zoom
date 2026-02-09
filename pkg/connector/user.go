@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -198,7 +199,8 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 	if err != nil {
 		return nil, err
 	}
-
+	// Wait for Zoom API to propagate the deletion
+	time.Sleep(3 * time.Second)
 	_, resp, err := u.client.GetUser(ctx, userID)
 	if err == nil || status.Code(err) != codes.NotFound {
 		return nil, fmt.Errorf("error deleting user. User %s still exists", userID)
