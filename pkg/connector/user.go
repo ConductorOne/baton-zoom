@@ -10,8 +10,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type userResourceType struct {
@@ -196,14 +194,8 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 
 	err := u.client.DeleteUser(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("baton-zoom: failed to delete user %s: %w", userID, err)
 	}
-
-	_, resp, err := u.client.GetUser(ctx, userID)
-	if err == nil || status.Code(err) != codes.NotFound {
-		return nil, fmt.Errorf("error deleting user. User %s still exists", userID)
-	}
-	defer resp.Body.Close()
 
 	return nil, nil
 }
