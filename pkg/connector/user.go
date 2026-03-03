@@ -7,7 +7,6 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 )
@@ -63,51 +62,51 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 	return ret, nil
 }
 
-func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	var pageToken string
 	var rv []*v2.Resource
 
-	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	users, nextPage, resp, err := u.client.GetUsers(ctx, page)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	resp.Body.Close()
 
 	if nextPage != "" {
 		pageToken, err = bag.NextToken(nextPage)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	annos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, user := range users {
 		userCopy := user
 		ur, err := userResource(userCopy, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		rv = append(rv, ur)
 	}
 
-	return rv, pageToken, annos, nil
+	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
-func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
+	return nil, &resource.SyncOpResults{}, nil
 }
 
-func (u *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	return nil, &resource.SyncOpResults{}, nil
 }
 
 func (u *userResourceType) CreateAccountCapabilityDetails(_ context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {

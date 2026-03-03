@@ -6,7 +6,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -54,99 +53,99 @@ func groupResource(group zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resou
 	return ret, nil
 }
 
-func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	var pageToken string
 	var rv []*v2.Resource
 
-	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	groups, nextToken, resp, err := g.client.GetGroups(ctx, page)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	annos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, group := range groups {
 		groupCopy := group
 		gr, err := groupResource(groupCopy, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		rv = append(rv, gr)
 	}
 
-	return rv, pageToken, annos, nil
+	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
-func (g *groupResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 
 	for _, entitlement := range entitlements {
 		options := []ent.EntitlementOption{
 			ent.WithGrantableTo(resourceTypeUser),
-			ent.WithDescription(fmt.Sprintf("Zoom %s group", resource.DisplayName)),
-			ent.WithDisplayName(fmt.Sprintf("%s group %s", resource.DisplayName, entitlement)),
+			ent.WithDescription(fmt.Sprintf("Zoom %s group", r.DisplayName)),
+			ent.WithDisplayName(fmt.Sprintf("%s group %s", r.DisplayName, entitlement)),
 		}
-		en := ent.NewAssignmentEntitlement(resource, entitlement, options...)
+		en := ent.NewAssignmentEntitlement(r, entitlement, options...)
 		rv = append(rv, en)
 	}
-	return rv, "", nil, nil
+	return rv, &resource.SyncOpResults{}, nil
 }
 
-func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	var rv []*v2.Grant
 
-	groupMembers, err := g.client.GetGroupMembers(ctx, resource.Id.Resource)
+	groupMembers, err := g.client.GetGroupMembers(ctx, r.Id.Resource)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, member := range groupMembers {
 		memberCopy := member
-		ur, err := userResource(memberCopy, resource.Id)
+		ur, err := userResource(memberCopy, r.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
-		membershipGrant := grant.NewGrant(resource, memberEntitlement, ur.Id)
+		membershipGrant := grant.NewGrant(r, memberEntitlement, ur.Id)
 		rv = append(rv, membershipGrant)
 	}
 
-	groupAdmins, err := g.client.GetGroupAdmins(ctx, resource.Id.Resource)
+	groupAdmins, err := g.client.GetGroupAdmins(ctx, r.Id.Resource)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, admin := range groupAdmins {
 		adminCopy := admin
-		ur, err := userResource(adminCopy, resource.Id)
+		ur, err := userResource(adminCopy, r.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
-		adminGrant := grant.NewGrant(resource, adminEntitlement, ur.Id)
+		adminGrant := grant.NewGrant(r, adminEntitlement, ur.Id)
 		rv = append(rv, adminGrant)
 	}
 
-	return rv, "", nil, nil
+	return rv, &resource.SyncOpResults{}, nil
 }
 
-func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
@@ -155,23 +154,23 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("baton-zoom: only users can be granted group membership")
+		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted group membership")
 	}
 
 	if entitlement.Slug == memberEntitlement {
 		err := g.client.AddGroupMembers(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
-			return nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
+			return nil, nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
 		}
-		return nil, nil
+		return nil, nil, nil
 	} else {
 		err := g.client.AddGroupAdmins(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
-			return nil, fmt.Errorf("baton-zoom: failed to add admin to group: %w", err)
+			return nil, nil, fmt.Errorf("baton-zoom: failed to add admin to group: %w", err)
 		}
 	}
 
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {

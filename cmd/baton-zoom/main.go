@@ -2,16 +2,14 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 
-	configSchema "github.com/conductorone/baton-sdk/pkg/config"
+	sdkconfig "github.com/conductorone/baton-sdk/pkg/config"
+	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/field"
-	"github.com/conductorone/baton-sdk/pkg/types"
+	"github.com/conductorone/baton-sdk/pkg/connectorrunner"
+	"github.com/conductorone/baton-zoom/pkg/config"
 	"github.com/conductorone/baton-zoom/pkg/connector"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -22,43 +20,28 @@ const (
 
 func main() {
 	ctx := context.Background()
-	_, cmd, err := configSchema.DefineConfiguration(ctx,
+	sdkconfig.RunConnector(ctx,
 		connectorName,
+		version,
+		config.Config,
 		getConnector,
-		field.NewConfiguration(ConfigurationFields),
+		connectorrunner.WithDefaultCapabilitiesConnectorBuilderV2(connector.NewForCapabilities()),
 	)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-
-	cmd.Version = version
-	err = cmd.Execute()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
 }
 
-func getConnector(ctx context.Context, v *viper.Viper) (types.ConnectorServer, error) {
+func getConnector(ctx context.Context, cfg *config.Zoom, _ *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
 	l := ctxzap.Extract(ctx)
 
 	cb, err := connector.New(
 		ctx,
-		v.GetString(AccountIdField.FieldName),
-		v.GetString(ZoomClientIdField.FieldName),
-		v.GetString(ZoomClientSecretField.FieldName),
+		cfg.GetString(config.AccountIdField.FieldName),
+		cfg.GetString(config.ZoomClientIdField.FieldName),
+		cfg.GetString(config.ZoomClientSecretField.FieldName),
 	)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
-		return nil, err
+		return nil, nil, err
 	}
 
-	c, err := connectorbuilder.NewConnector(ctx, cb)
-	if err != nil {
-		l.Error("error creating connector", zap.Error(err))
-		return nil, err
-	}
-
-	return c, nil
+	return cb, nil, nil
 }
