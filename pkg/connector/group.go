@@ -64,9 +64,12 @@ func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, o
 
 	groups, nextToken, resp, err := g.client.GetGroups(ctx, page)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)

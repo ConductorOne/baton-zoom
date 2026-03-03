@@ -56,9 +56,12 @@ func (g *contactGroupResourceType) List(ctx context.Context, parentId *v2.Resour
 
 	groups, nextToken, resp, err := g.client.GetContactGroups(ctx, page)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)
@@ -110,10 +113,12 @@ func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, o
 
 	groupMembers, nextToken, resp, err := g.client.GetContactGroupMembers(ctx, r.Id.Resource, page)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)

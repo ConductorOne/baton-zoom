@@ -58,9 +58,12 @@ func (r *roleResourceType) List(ctx context.Context, parentId *v2.ResourceId, _ 
 
 	roles, resp, err := r.client.GetRoles(ctx)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	annos, err := parseResp(resp)
 	if err != nil {
@@ -105,9 +108,12 @@ func (r *roleResourceType) Grants(ctx context.Context, res *v2.Resource, opts re
 
 	roleMembers, nextToken, resp, err := r.client.GetRoleMembers(ctx, res.Id.Resource, page)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)

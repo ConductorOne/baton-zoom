@@ -73,9 +73,12 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 
 	users, nextPage, resp, err := u.client.GetUsers(ctx, page)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextPage != "" {
 		pageToken, err = bag.NextToken(nextPage)
