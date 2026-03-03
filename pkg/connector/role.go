@@ -98,7 +98,7 @@ func (r *roleResourceType) Grants(ctx context.Context, res *v2.Resource, opts re
 	var rv []*v2.Grant
 	var pageToken string
 
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeRole.Id})
 	if err != nil {
 		return nil, nil, err
 	}

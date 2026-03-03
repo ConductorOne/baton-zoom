@@ -139,6 +139,10 @@ func (z *Zoom) Validate(ctx context.Context) (annotations.Annotations, error) {
 	return nil, nil
 }
 
+func (z *Zoom) Close() error {
+	return nil
+}
+
 func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	return []connectorbuilder.ResourceSyncerV2{
 		userBuilder(z.client),

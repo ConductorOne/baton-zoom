@@ -66,7 +66,7 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 	var pageToken string
 	var rv []*v2.Resource
 
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
 	if err != nil {
 		return nil, nil, err
 	}
