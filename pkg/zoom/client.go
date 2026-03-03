@@ -164,64 +164,38 @@ func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
 	return res.Roles, resp, nil
 }
 
-// GetGroupMembers returns all Zoom group members.
-func (c *Client) GetGroupMembers(ctx context.Context, groupId string) ([]User, error) {
+// GetGroupMembers returns one page of Zoom group members.
+func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
 	url := fmt.Sprintf("%s/groups/%s/members", baseUrl, groupId)
-	var token = ""
-	var members []User
-
-	for {
-		var res struct {
-			PaginationData
-			Members []User `json:"members"`
-		}
-
-		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		members = append(members, res.Members...)
-
-		if res.NextPageToken == "" {
-			break
-		}
-
-		token = res.NextPageToken
+	var res struct {
+		PaginationData
+		Members []User `json:"members"`
 	}
 
-	return members, nil
+	q := paginationQuery(nextToken)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return res.Members, res.NextPageToken, resp, nil
 }
 
-// GetGroupAdmins returns all Zoom group admins.
-func (c *Client) GetGroupAdmins(ctx context.Context, groupId string) ([]User, error) {
+// GetGroupAdmins returns one page of Zoom group admins.
+func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
 	url := fmt.Sprintf("%s/groups/%s/admins", baseUrl, groupId)
-	var admins []User
-	var token = ""
-
-	for {
-		var res struct {
-			PaginationData
-			Admins []User `json:"admins"`
-		}
-
-		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		admins = append(admins, res.Admins...)
-
-		if res.NextPageToken == "" {
-			break
-		}
-
-		token = res.NextPageToken
+	var res struct {
+		PaginationData
+		Admins []User `json:"admins"`
 	}
-	return admins, nil
+
+	q := paginationQuery(nextToken)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return res.Admins, res.NextPageToken, resp, nil
 }
 
 // GetContactGroupMembers returns all Zoom contact group members.

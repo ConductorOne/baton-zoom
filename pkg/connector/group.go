@@ -6,6 +6,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -110,42 +111,106 @@ func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ re
 	return rv, &resource.SyncOpResults{}, nil
 }
 
-func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	var rv []*v2.Grant
 
-	groupMembers, err := g.client.GetGroupMembers(ctx, r.Id.Resource)
+	b := &pagination.Bag{}
+	err := b.Unmarshal(opts.PageToken.Token)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, member := range groupMembers {
-		memberCopy := member
-		ur, err := userResource(memberCopy, r.Id)
+	// Initialize: start paginating members first.
+	if b.Current() == nil {
+		b.Push(pagination.PageState{ResourceTypeID: memberEntitlement})
+	}
+
+	current := b.Current()
+
+	switch current.ResourceTypeID {
+	case memberEntitlement:
+		members, nextToken, resp, err := g.client.GetGroupMembers(ctx, r.Id.Resource, current.Token)
+		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+
+		annos, err := parseResp(resp)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		membershipGrant := grant.NewGrant(r, memberEntitlement, ur.Id)
-		rv = append(rv, membershipGrant)
-	}
+		for _, member := range members {
+			memberCopy := member
+			ur, err := userResource(memberCopy, r.Id)
+			if err != nil {
+				return nil, nil, err
+			}
+			rv = append(rv, grant.NewGrant(r, memberEntitlement, ur.Id))
+		}
 
-	groupAdmins, err := g.client.GetGroupAdmins(ctx, r.Id.Resource)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	for _, admin := range groupAdmins {
-		adminCopy := admin
-		ur, err := userResource(adminCopy, r.Id)
+		if nextToken != "" {
+			err = b.Next(nextToken)
+		} else {
+			// Done with members, transition to admins.
+			b.Pop()
+			b.Push(pagination.PageState{ResourceTypeID: adminEntitlement})
+		}
 		if err != nil {
 			return nil, nil, err
 		}
 
-		adminGrant := grant.NewGrant(r, adminEntitlement, ur.Id)
-		rv = append(rv, adminGrant)
+		pageToken, err := b.Marshal()
+		if err != nil {
+			return nil, nil, err
+		}
+		return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
+
+	case adminEntitlement:
+		admins, nextToken, resp, err := g.client.GetGroupAdmins(ctx, r.Id.Resource, current.Token)
+		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+
+		annos, err := parseResp(resp)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, admin := range admins {
+			adminCopy := admin
+			ur, err := userResource(adminCopy, r.Id)
+			if err != nil {
+				return nil, nil, err
+			}
+			rv = append(rv, grant.NewGrant(r, adminEntitlement, ur.Id))
+		}
+
+		if nextToken != "" {
+			err = b.Next(nextToken)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else {
+			// Done with admins — pop leaves bag empty, Marshal returns "".
+			b.Pop()
+		}
+
+		pageToken, err := b.Marshal()
+		if err != nil {
+			return nil, nil, err
+		}
+		return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 	}
 
-	return rv, &resource.SyncOpResults{}, nil
+	return nil, &resource.SyncOpResults{}, nil
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
