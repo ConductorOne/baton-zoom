@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -47,86 +45,91 @@ func contactGroupResource(group zoom.ContactGroup, parentResourceID *v2.Resource
 	return ret, nil
 }
 
-func (g *contactGroupResourceType) List(ctx context.Context, parentId *v2.ResourceId, token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (g *contactGroupResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	var pageToken string
 	var rv []*v2.Resource
 
-	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	groups, nextToken, resp, err := g.client.GetContactGroups(ctx, page)
 	if err != nil {
-		return nil, "", nil, err
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, nil, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	annos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, group := range groups {
 		groupCopy := group
 		cgr, err := contactGroupResource(groupCopy, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		rv = append(rv, cgr)
 	}
 
-	return rv, pageToken, annos, nil
+	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
-func (g *contactGroupResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (g *contactGroupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 
 	membershipOptions := []ent.EntitlementOption{
 		ent.WithGrantableTo(resourceTypeUser, resourceTypeGroup),
-		ent.WithDescription(fmt.Sprintf("Zoom %s group", resource.DisplayName)),
-		ent.WithDisplayName(fmt.Sprintf("%s group %s", resource.DisplayName, memberEntitlement)),
+		ent.WithDescription(fmt.Sprintf("Zoom %s group", r.DisplayName)),
+		ent.WithDisplayName(fmt.Sprintf("%s group %s", r.DisplayName, memberEntitlement)),
 	}
 
-	en := ent.NewAssignmentEntitlement(resource, memberEntitlement, membershipOptions...)
+	en := ent.NewAssignmentEntitlement(r, memberEntitlement, membershipOptions...)
 	rv = append(rv, en)
 
-	return rv, "", nil, nil
+	return rv, &resource.SyncOpResults{}, nil
 }
 
-func (g *contactGroupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	var rv []*v2.Grant
 	var pageToken string
 
-	bag, page, err := parsePageToken(token.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	groupMembers, nextToken, resp, err := g.client.GetContactGroupMembers(ctx, resource.Id.Resource, page)
+	groupMembers, nextToken, resp, err := g.client.GetContactGroupMembers(ctx, r.Id.Resource, page)
 	if err != nil {
-		return nil, "", nil, err
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, nil, err
 	}
-
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if nextToken != "" {
 		pageToken, err = bag.NextToken(nextToken)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 	}
 
 	annos, err := parseResp(resp)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	for _, member := range groupMembers {
@@ -136,28 +139,28 @@ func (g *contactGroupResourceType) Grants(ctx context.Context, resource *v2.Reso
 			ur, err := userResource(zoom.User{
 				ID:          memberCopy.ID,
 				DisplayName: memberCopy.Name,
-			}, resource.Id)
+			}, r.Id)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 
-			userGrant := grant.NewGrant(resource, memberEntitlement, ur.Id)
+			userGrant := grant.NewGrant(r, memberEntitlement, ur.Id)
 			rv = append(rv, userGrant)
 		} else {
 			gr, err := groupResource(zoom.Group{
 				ID:   memberCopy.ID,
 				Name: memberCopy.Name,
-			}, resource.Id)
+			}, r.Id)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 
-			groupGrant := grant.NewGrant(resource, memberEntitlement, gr.Id)
+			groupGrant := grant.NewGrant(r, memberEntitlement, gr.Id)
 			rv = append(rv, groupGrant)
 		}
 	}
 
-	return rv, pageToken, annos, nil
+	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
 func contactGroupBuilder(client *zoom.Client) *contactGroupResourceType {

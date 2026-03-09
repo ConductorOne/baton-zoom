@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -33,7 +33,7 @@ func TestUserResourceTypeList(t *testing.T) {
 		resourceType: &v2.ResourceType{},
 		client:       cli.client,
 	}
-	rs, _, _, err := user.List(ctx, &v2.ResourceId{}, &pagination.Token{})
+	rs, _, err := user.List(ctx, &v2.ResourceId{}, resource.SyncOpAttrs{})
 	assert.Nil(t, err)
 	assert.NotNil(t, rs)
 }

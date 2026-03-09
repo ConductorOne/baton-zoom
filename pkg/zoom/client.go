@@ -69,7 +69,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	req.SetBasicAuth(clientId, clientSecret)
 	req.URL.RawQuery = data.Encode()
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) //nolint:gosec // G704: URL is constructed from hardcoded constants, not user input
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +77,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	defer resp.Body.Close()
 
 	var res struct {
-		AccessToken string `json:"Access_token"`
+		AccessToken string `json:"Access_token"` //nolint:gosec // G117: false positive, this is a token response struct field
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
@@ -164,64 +164,38 @@ func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
 	return res.Roles, resp, nil
 }
 
-// GetGroupMembers returns all Zoom group members.
-func (c *Client) GetGroupMembers(ctx context.Context, groupId string) ([]User, error) {
+// GetGroupMembers returns one page of Zoom group members.
+func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
 	url := fmt.Sprintf("%s/groups/%s/members", baseUrl, groupId)
-	var token = ""
-	var members []User
-
-	for {
-		var res struct {
-			PaginationData
-			Members []User `json:"members"`
-		}
-
-		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		members = append(members, res.Members...)
-
-		if res.NextPageToken == "" {
-			break
-		}
-
-		token = res.NextPageToken
+	var res struct {
+		PaginationData
+		Members []User `json:"members"`
 	}
 
-	return members, nil
+	q := paginationQuery(nextToken)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return res.Members, res.NextPageToken, resp, nil
 }
 
-// GetGroupAdmins returns all Zoom group admins.
-func (c *Client) GetGroupAdmins(ctx context.Context, groupId string) ([]User, error) {
+// GetGroupAdmins returns one page of Zoom group admins.
+func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
 	url := fmt.Sprintf("%s/groups/%s/admins", baseUrl, groupId)
-	var admins []User
-	var token = ""
-
-	for {
-		var res struct {
-			PaginationData
-			Admins []User `json:"admins"`
-		}
-
-		q := paginationQuery(token)
-		resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		admins = append(admins, res.Admins...)
-
-		if res.NextPageToken == "" {
-			break
-		}
-
-		token = res.NextPageToken
+	var res struct {
+		PaginationData
+		Admins []User `json:"admins"`
 	}
-	return admins, nil
+
+	q := paginationQuery(nextToken)
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	return res.Admins, res.NextPageToken, resp, nil
 }
 
 // GetContactGroupMembers returns all Zoom contact group members.
@@ -459,7 +433,7 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", c.token))
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from hardcoded constants, not user input
 	if err != nil {
 		return nil, err
 	}
