@@ -69,7 +69,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	req.SetBasicAuth(clientId, clientSecret)
 	req.URL.RawQuery = data.Encode()
 
-	resp, err := httpClient.Do(req) //nolint:gosec // G704: URL is constructed from hardcoded constants, not user input
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +77,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	defer resp.Body.Close()
 
 	var res struct {
-		AccessToken string `json:"Access_token"` //nolint:gosec // G117: false positive, this is a token response struct field
+		AccessToken string `json:"Access_token"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
@@ -433,7 +433,7 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", c.token))
 
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from hardcoded constants, not user input
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
