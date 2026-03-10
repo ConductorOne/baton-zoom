@@ -19,7 +19,17 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
-		Annotations: annotationsForUserResourceType(),
+		Annotations: annotations.New(
+			&v2.CapabilityPermissions{
+				Permissions: []*v2.CapabilityPermission{
+					{Permission: "user:read:user:admin"},
+					{Permission: "user:read:list_users:admin"},
+					{Permission: "user:write:user:admin"},
+					{Permission: "user:delete:user:admin"},
+				},
+			},
+			&v2.SkipEntitlementsAndGrants{},
+		),
 	}
 	resourceTypeGroup = &v2.ResourceType{
 		Id:          "group",
@@ -27,6 +37,17 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_GROUP,
 		},
+		Annotations: annotations.New(&v2.CapabilityPermissions{
+			Permissions: []*v2.CapabilityPermission{
+				{Permission: "group:read:list_groups:admin"},
+				{Permission: "group:read:list_members:admin"},
+				{Permission: "group:read:administrator:admin"},
+				{Permission: "group:write:member:admin"},
+				{Permission: "group:delete:member:admin"},
+				{Permission: "group:write:administrator:admin"},
+				{Permission: "group:delete:administrator:admin"},
+			},
+		}),
 	}
 	resourceTypeContactGroup = &v2.ResourceType{
 		Id:          "contactGroup",
@@ -34,6 +55,12 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_GROUP,
 		},
+		Annotations: annotations.New(&v2.CapabilityPermissions{
+			Permissions: []*v2.CapabilityPermission{
+				{Permission: "contact_group:read:list_groups:admin"},
+				{Permission: "contact_group:read:list_members:admin"},
+			},
+		}),
 	}
 	resourceTypeRole = &v2.ResourceType{
 		Id:          "role",
@@ -41,6 +68,14 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_ROLE,
 		},
+		Annotations: annotations.New(&v2.CapabilityPermissions{
+			Permissions: []*v2.CapabilityPermission{
+				{Permission: "role:read:list_roles:admin"},
+				{Permission: "role:read:list_members:admin"},
+				{Permission: "role:write:member:admin"},
+				{Permission: "role:delete:member:admin"},
+			},
+		}),
 	}
 )
 
