@@ -436,6 +436,9 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, err
 	}
 
