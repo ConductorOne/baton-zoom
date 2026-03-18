@@ -1,220 +1,252 @@
 {
-  "@type":  "type.googleapis.com/c1.connector.v2.ConnectorCapabilities",
-  "resourceTypeCapabilities":  [
+  "@type": "type.googleapis.com/c1.connector.v2.ConnectorCapabilities",
+  "resourceTypeCapabilities": [
     {
-      "resourceType":  {
-        "id":  "contactGroup",
-        "displayName":  "Contact Group",
-        "traits":  [
+      "resourceType": {
+        "id": "contactGroup",
+        "displayName": "Contact Group",
+        "traits": [
           "TRAIT_GROUP"
         ],
-        "annotations":  [
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
-            "permissions":  [
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
               {
-                "permission":  "contact_group:read:list_groups:admin"
+                "permission": "contact_group:read:list_groups:admin"
               },
               {
-                "permission":  "contact_group:read:list_members:admin"
+                "permission": "contact_group:read:list_members:admin"
               }
             ]
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC"
       ],
-      "permissions":  {
-        "permissions":  [
+      "permissions": {
+        "permissions": [
           {
-            "permission":  "contact_group:read:list_groups:admin"
+            "permission": "contact_group:read:list_groups:admin"
           },
           {
-            "permission":  "contact_group:read:list_members:admin"
+            "permission": "contact_group:read:list_members:admin"
           }
         ]
       }
     },
     {
-      "resourceType":  {
-        "id":  "group",
-        "displayName":  "Group",
-        "traits":  [
+      "resourceType": {
+        "id": "group",
+        "displayName": "Group",
+        "traits": [
           "TRAIT_GROUP"
         ],
-        "annotations":  [
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
-            "permissions":  [
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
               {
-                "permission":  "group:read:list_groups:admin"
+                "permission": "group:read:list_groups:admin"
               },
               {
-                "permission":  "group:read:list_members:admin"
+                "permission": "group:read:list_members:admin"
               },
               {
-                "permission":  "group:read:administrator:admin"
+                "permission": "group:read:administrator:admin"
               },
               {
-                "permission":  "group:write:member:admin"
+                "permission": "group:write:member:admin"
               },
               {
-                "permission":  "group:delete:member:admin"
+                "permission": "group:delete:member:admin"
               },
               {
-                "permission":  "group:write:administrator:admin"
+                "permission": "group:write:administrator:admin"
               },
               {
-                "permission":  "group:delete:administrator:admin"
+                "permission": "group:delete:administrator:admin"
               }
             ]
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
         "CAPABILITY_SYNC",
         "CAPABILITY_PROVISION"
       ],
-      "permissions":  {
-        "permissions":  [
+      "permissions": {
+        "permissions": [
           {
-            "permission":  "group:read:list_groups:admin"
+            "permission": "group:read:list_groups:admin"
           },
           {
-            "permission":  "group:read:list_members:admin"
+            "permission": "group:read:list_members:admin"
           },
           {
-            "permission":  "group:read:administrator:admin"
+            "permission": "group:read:administrator:admin"
           },
           {
-            "permission":  "group:write:member:admin"
+            "permission": "group:write:member:admin"
           },
           {
-            "permission":  "group:delete:member:admin"
+            "permission": "group:delete:member:admin"
           },
           {
-            "permission":  "group:write:administrator:admin"
+            "permission": "group:write:administrator:admin"
           },
           {
-            "permission":  "group:delete:administrator:admin"
+            "permission": "group:delete:administrator:admin"
           }
         ]
       }
     },
     {
-      "resourceType":  {
-        "id":  "role",
-        "displayName":  "Role",
-        "traits":  [
-          "TRAIT_ROLE"
-        ],
-        "annotations":  [
-          {
-            "@type":  "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
-            "permissions":  [
-              {
-                "permission":  "role:read:list_roles:admin"
-              },
-              {
-                "permission":  "role:read:list_members:admin"
-              },
-              {
-                "permission":  "role:write:member:admin"
-              },
-              {
-                "permission":  "role:delete:member:admin"
-              }
-            ]
-          }
-        ]
-      },
-      "capabilities":  [
-        "CAPABILITY_SYNC",
-        "CAPABILITY_PROVISION"
-      ],
-      "permissions":  {
-        "permissions":  [
-          {
-            "permission":  "role:read:list_roles:admin"
-          },
-          {
-            "permission":  "role:read:list_members:admin"
-          },
-          {
-            "permission":  "role:write:member:admin"
-          },
-          {
-            "permission":  "role:delete:member:admin"
-          }
-        ]
-      }
-    },
-    {
-      "resourceType":  {
-        "id":  "user",
-        "displayName":  "User",
-        "traits":  [
+      "resourceType": {
+        "id": "invite",
+        "displayName": "Invite",
+        "traits": [
           "TRAIT_USER"
         ],
-        "annotations":  [
+        "annotations": [
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
-            "permissions":  [
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
               {
-                "permission":  "user:read:user:admin"
-              },
-              {
-                "permission":  "user:read:list_users:admin"
-              },
-              {
-                "permission":  "user:write:user:admin"
-              },
-              {
-                "permission":  "user:delete:user:admin"
+                "permission": "user:read:list_users:admin"
               }
             ]
           },
           {
-            "@type":  "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
           }
         ]
       },
-      "capabilities":  [
+      "capabilities": [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions": {
+        "permissions": [
+          {
+            "permission": "user:read:list_users:admin"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType": {
+        "id": "role",
+        "displayName": "Role",
+        "traits": [
+          "TRAIT_ROLE"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
+              {
+                "permission": "role:read:list_roles:admin"
+              },
+              {
+                "permission": "role:read:list_members:admin"
+              },
+              {
+                "permission": "role:write:member:admin"
+              },
+              {
+                "permission": "role:delete:member:admin"
+              }
+            ]
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC",
+        "CAPABILITY_PROVISION"
+      ],
+      "permissions": {
+        "permissions": [
+          {
+            "permission": "role:read:list_roles:admin"
+          },
+          {
+            "permission": "role:read:list_members:admin"
+          },
+          {
+            "permission": "role:write:member:admin"
+          },
+          {
+            "permission": "role:delete:member:admin"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType": {
+        "id": "user",
+        "displayName": "User",
+        "traits": [
+          "TRAIT_USER"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
+              {
+                "permission": "user:read:user:admin"
+              },
+              {
+                "permission": "user:read:list_users:admin"
+              },
+              {
+                "permission": "user:write:user:admin"
+              },
+              {
+                "permission": "user:delete:user:admin"
+              }
+            ]
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+          }
+        ]
+      },
+      "capabilities": [
         "CAPABILITY_SYNC",
         "CAPABILITY_ACCOUNT_PROVISIONING",
         "CAPABILITY_RESOURCE_DELETE"
       ],
-      "permissions":  {
-        "permissions":  [
+      "permissions": {
+        "permissions": [
           {
-            "permission":  "user:read:user:admin"
+            "permission": "user:read:user:admin"
           },
           {
-            "permission":  "user:read:list_users:admin"
+            "permission": "user:read:list_users:admin"
           },
           {
-            "permission":  "user:write:user:admin"
+            "permission": "user:write:user:admin"
           },
           {
-            "permission":  "user:delete:user:admin"
+            "permission": "user:delete:user:admin"
           }
         ]
       }
     }
   ],
-  "connectorCapabilities":  [
+  "connectorCapabilities": [
     "CAPABILITY_PROVISION",
     "CAPABILITY_SYNC",
     "CAPABILITY_ACCOUNT_PROVISIONING",
     "CAPABILITY_RESOURCE_DELETE"
   ],
-  "credentialDetails":  {
-    "capabilityAccountProvisioning":  {
-      "supportedCredentialOptions":  [
+  "credentialDetails": {
+    "capabilityAccountProvisioning": {
+      "supportedCredentialOptions": [
         "CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD"
       ],
-      "preferredCredentialOption":  "CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD"
+      "preferredCredentialOption": "CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD"
     }
   }
 }

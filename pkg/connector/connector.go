@@ -12,6 +12,8 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 )
 
+const userStatusInactive = "inactive"
+
 var (
 	resourceTypeUser = &v2.ResourceType{
 		Id:          "user",
@@ -62,6 +64,21 @@ var (
 			},
 		}),
 	}
+	resourceTypeInvite = &v2.ResourceType{
+		Id:          "invite",
+		DisplayName: "Invite",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_USER,
+		},
+		Annotations: annotations.New(
+			&v2.CapabilityPermissions{
+				Permissions: []*v2.CapabilityPermission{
+					{Permission: "user:read:list_users:admin"},
+				},
+			},
+			&v2.SkipEntitlementsAndGrants{},
+		),
+	}
 	resourceTypeRole = &v2.ResourceType{
 		Id:          "role",
 		DisplayName: "Role",
@@ -80,11 +97,12 @@ var (
 )
 
 type Zoom struct {
-	client *zoom.Client
+	client            *zoom.Client
+	syncInactiveUsers bool
 }
 
 func NewForCapabilities() *Zoom {
-	return &Zoom{}
+	return &Zoom{syncInactiveUsers: true}
 }
 
 func New(
@@ -92,6 +110,7 @@ func New(
 	accountId string,
 	clientId string,
 	clientSecret string,
+	syncInactiveUsers bool,
 ) (*Zoom, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
@@ -104,7 +123,8 @@ func New(
 	}
 
 	return &Zoom{
-		client: zoom.NewClient(httpClient, token),
+		client:            zoom.NewClient(httpClient, token),
+		syncInactiveUsers: syncInactiveUsers,
 	}, nil
 }
 
@@ -180,7 +200,8 @@ func (z *Zoom) Close() error {
 
 func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	return []connectorbuilder.ResourceSyncerV2{
-		userBuilder(z.client),
+		userBuilder(z.client, z.syncInactiveUsers),
+		inviteBuilder(z.client),
 		groupBuilder(z.client),
 		roleBuilder(z.client),
 		contactGroupBuilder(z.client),

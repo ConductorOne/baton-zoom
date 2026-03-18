@@ -86,8 +86,8 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	return res.AccessToken, nil
 }
 
-// GetUsers returns all Zoom users.
-func (c *Client) GetUsers(ctx context.Context, nextToken string) ([]User, string, *http.Response, error) {
+// GetUsers returns Zoom users filtered by status ("active", "inactive", or "pending").
+func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) ([]User, string, *http.Response, error) {
 	url := fmt.Sprint(baseUrl, "/users")
 	var res struct {
 		PaginationData
@@ -95,6 +95,7 @@ func (c *Client) GetUsers(ctx context.Context, nextToken string) ([]User, string
 	}
 
 	q := paginationQuery(nextToken)
+	q.Set("status", status)
 	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
 	if err != nil {
 		return nil, "", nil, err

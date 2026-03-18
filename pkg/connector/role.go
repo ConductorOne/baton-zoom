@@ -153,7 +153,24 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted role membership")
 	}
 
-	err := r.client.AssignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+	user, resp, err := r.client.GetUser(ctx, principal.Id.Resource)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, nil, fmt.Errorf("baton-zoom: failed to get user before granting role: %w", err)
+	}
+	resp.Body.Close()
+
+	if user.Status == userStatusInactive {
+		return nil, nil, fmt.Errorf("baton-zoom: cannot grant role to inactive user %s", principal.Id.Resource)
+	}
+
+	if user.RoleID == entitlement.Resource.Id.Resource {
+		return nil, annotations.New(&v2.GrantAlreadyExists{}), nil
+	}
+
+	err = r.client.AssignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
 		return nil, nil, fmt.Errorf("baton-zoom: failed to assign role to user: %w", err)
 	}
@@ -176,7 +193,24 @@ func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 		return nil, fmt.Errorf("baton-zoom: only users can have role membership revoked")
 	}
 
-	err := r.client.UnassignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+	user, resp, err := r.client.GetUser(ctx, principal.Id.Resource)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, fmt.Errorf("baton-zoom: failed to get user before revoking role: %w", err)
+	}
+	resp.Body.Close()
+
+	if user.Status == userStatusInactive {
+		return nil, fmt.Errorf("baton-zoom: cannot revoke role from inactive user %s", principal.Id.Resource)
+	}
+
+	if user.RoleID != entitlement.Resource.Id.Resource {
+		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+	}
+
+	err = r.client.UnassignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
 		return nil, fmt.Errorf("baton-zoom: failed to unassign role from user: %w", err)
 	}

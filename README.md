@@ -58,6 +58,7 @@ baton resources
 
 `baton-zoom` pulls down information about the following Zoom resources:
 - Users
+- Invites (pending users)
 - Groups
 - Contact Groups
 - Roles
@@ -92,6 +93,7 @@ Flags:
       --log-level string            The log level: debug, info, warn, error ($BATON_LOG_LEVEL) (default "info")
   -p, --provisioning                This must be set in order for provisioning actions to be enabled ($BATON_PROVISIONING)
       --skip-full-sync              This must be set to skip a full sync ($BATON_SKIP_FULL_SYNC)
+      --sync-inactive-users         Sync inactive Zoom users alongside active users ($BATON_SYNC_INACTIVE_USERS)
       --ticketing                   This must be set to enable ticketing support ($BATON_TICKETING)
   -v, --version                     version for baton-zoom
       --zoom-client-id string       required: Client ID used to generate token providing access to Zoom API. ($BATON_ZOOM_CLIENT_ID)
