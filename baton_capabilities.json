@@ -104,6 +104,38 @@
     },
     {
       "resourceType":  {
+        "id":  "invite",
+        "displayName":  "Invite",
+        "traits":  [
+          "TRAIT_USER"
+        ],
+        "annotations":  [
+          {
+            "@type":  "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions":  [
+              {
+                "permission":  "user:read:list_users:admin"
+              }
+            ]
+          },
+          {
+            "@type":  "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+          }
+        ]
+      },
+      "capabilities":  [
+        "CAPABILITY_SYNC"
+      ],
+      "permissions":  {
+        "permissions":  [
+          {
+            "permission":  "user:read:list_users:admin"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType":  {
         "id":  "role",
         "displayName":  "Role",
         "traits":  [

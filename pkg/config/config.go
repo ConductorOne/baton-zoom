@@ -22,10 +22,16 @@ var (
 		field.WithDisplayName("Client Secret"),
 		field.WithIsSecret(true),
 	)
+	SyncInactiveUsersField = field.BoolField(
+		"sync-inactive-users",
+		field.WithDescription("Sync inactive Zoom users alongside active users."),
+		field.WithDisplayName("Sync Inactive Users"),
+	)
 	ConfigurationFields = []field.SchemaField{
 		AccountIdField,
 		ZoomClientIdField,
 		ZoomClientSecretField,
+		SyncInactiveUsersField,
 	}
 )
 

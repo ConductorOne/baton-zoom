@@ -7,6 +7,7 @@ type Zoom struct {
 	AccountId string `mapstructure:"account-id"`
 	ZoomClientId string `mapstructure:"zoom-client-id"`
 	ZoomClientSecret string `mapstructure:"zoom-client-secret"`
+	SyncInactiveUsers bool `mapstructure:"sync-inactive-users"`
 }
 
 func (c *Zoom) findFieldByTag(tagValue string) (any, bool) {

@@ -7,13 +7,15 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 )
 
 type userResourceType struct {
-	resourceType *v2.ResourceType
-	client       *zoom.Client
+	resourceType      *v2.ResourceType
+	client            *zoom.Client
+	syncInactiveUsers bool
 }
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -32,9 +34,7 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 	var userStatus v2.UserTrait_Status_Status
 
 	switch user.Status {
-	case "pending":
-		userStatus = v2.UserTrait_Status_STATUS_UNSPECIFIED
-	case "inactive":
+	case userStatusInactive:
 		userStatus = v2.UserTrait_Status_STATUS_DISABLED
 	case "active":
 		userStatus = v2.UserTrait_Status_STATUS_ENABLED
@@ -63,15 +63,28 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 }
 
 func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var pageToken string
 	var rv []*v2.Resource
 
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeUser.Id})
+	b := &pagination.Bag{}
+	err := b.Unmarshal(opts.PageToken.Token)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	users, nextPage, resp, err := u.client.GetUsers(ctx, page)
+	// Initialize: push statuses in reverse order so active is processed first.
+	// Inactive users are only included when the flag is enabled.
+	// Pending users are omitted — they have no ID yet and are synced via the Invite resource type.
+	if b.Current() == nil {
+		if u.syncInactiveUsers {
+			b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusInactive})
+		}
+		b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: "active"})
+	}
+
+	status := b.Current().ResourceID
+	page := b.PageToken()
+
+	users, nextPage, resp, err := u.client.GetUsers(ctx, page, status)
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()
@@ -80,11 +93,15 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 	}
 	defer resp.Body.Close()
 
-	if nextPage != "" {
-		pageToken, err = bag.NextToken(nextPage)
-		if err != nil {
-			return nil, nil, err
-		}
+	// Advance the bag: if no next page, pops the current status state; otherwise updates its token.
+	err = b.Next(nextPage)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pageToken, err := b.Marshal()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	annos, err := parseResp(resp)
@@ -202,9 +219,10 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 	return nil, nil
 }
 
-func userBuilder(client *zoom.Client) *userResourceType {
+func userBuilder(client *zoom.Client, syncInactiveUsers bool) *userResourceType {
 	return &userResourceType{
-		resourceType: resourceTypeUser,
-		client:       client,
+		resourceType:      resourceTypeUser,
+		client:            client,
+		syncInactiveUsers: syncInactiveUsers,
 	}
 }

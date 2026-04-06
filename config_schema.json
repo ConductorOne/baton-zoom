@@ -125,6 +125,12 @@
           "isRequired": true
         }
       }
+    },
+    {
+      "name": "sync-inactive-users",
+      "displayName": "Sync Inactive Users",
+      "description": "Sync inactive Zoom users alongside active users.",
+      "boolField": {}
     }
   ],
   "displayName": "Zoom",
