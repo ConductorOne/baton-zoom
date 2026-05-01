@@ -11,6 +11,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const (
+	firstNameKey = "first_name"
+	lastNameKey  = "last_name"
+)
+
 func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, string, error) {
 	b := &pagination.Bag{}
 	err := b.Unmarshal(i)

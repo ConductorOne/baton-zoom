@@ -145,7 +145,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 					Placeholder: "john.doe@example.com",
 					Order:       1,
 				},
-				"first_name": {
+				firstNameKey: {
 					DisplayName: "First Name",
 					Required:    true,
 					Description: "First name of the person who will own the user.",
@@ -155,7 +155,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 					Placeholder: "John",
 					Order:       2,
 				},
-				"last_name": {
+				lastNameKey: {
 					DisplayName: "Last Name",
 					Required:    true,
 					Description: "Last name of the person who will own the user.",

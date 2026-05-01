@@ -21,8 +21,8 @@ func (i *inviteResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 // Pending users have no Zoom ID yet, so the email is used as the stable resource identifier.
 func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]interface{}{
-		"first_name": user.FirstName,
-		"last_name":  user.LastName,
+		firstNameKey: user.FirstName,
+		lastNameKey:  user.LastName,
 		"login":      user.Email,
 	}
 
