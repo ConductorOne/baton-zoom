@@ -50,6 +50,6 @@ func getClientForTesting(ctx context.Context) (*Zoom, error) {
 	}
 
 	return &Zoom{
-		client: zoom.NewClient(httpClient, token),
+		client: zoom.NewClient(httpClient, token, ""),
 	}, nil
 }

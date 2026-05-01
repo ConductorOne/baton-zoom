@@ -25,8 +25,8 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 // Create a new connector resource for a Zoom user.
 func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]interface{}{
-		"first_name": user.FirstName,
-		"last_name":  user.LastName,
+		firstNameKey: user.FirstName,
+		lastNameKey:  user.LastName,
 		"login":      user.Email,
 		"user_id":    user.ID,
 	}
