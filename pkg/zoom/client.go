@@ -389,6 +389,25 @@ func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error 
 	return nil
 }
 
+func (c *Client) UpdateUserType(ctx context.Context, userId string, userType int) error {
+	requestURL := fmt.Sprintf("%s/users/%s", c.baseURL, userId)
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"type": userType,
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodPatch, nil, requestBody)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return nil
+}
+
 func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*UserCreationResponse, error) {
 	requestURL, err := url.JoinPath(c.baseURL, "users")
 	if err != nil {

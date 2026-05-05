@@ -94,6 +94,17 @@ var (
 			},
 		}),
 	}
+	resourceTypeLicense = &v2.ResourceType{
+		Id:          "license",
+		DisplayName: "License",
+		Annotations: annotations.New(&v2.CapabilityPermissions{
+			Permissions: []*v2.CapabilityPermission{
+				{Permission: "user:read:user:admin"},
+				{Permission: "user:read:list_users:admin"},
+				{Permission: "user:write:user:admin"},
+			},
+		}),
+	}
 )
 
 type Zoom struct {
@@ -132,7 +143,7 @@ func New(
 func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "Zoom",
-		Description: "Connector syncing users, groups, roles and contact groups from Zoom to Baton.",
+		Description: "Connector syncing users, groups, roles, contact groups, and licenses from Zoom to Baton.",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 				"email": {
@@ -206,5 +217,6 @@ func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceS
 		groupBuilder(z.client),
 		roleBuilder(z.client),
 		contactGroupBuilder(z.client),
+		licenseBuilder(z.client, z.syncInactiveUsers),
 	}
 }
