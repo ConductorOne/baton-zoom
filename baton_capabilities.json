@@ -136,6 +136,45 @@
     },
     {
       "resourceType": {
+        "id": "license",
+        "displayName": "License",
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
+              {
+                "permission": "user:read:user:admin"
+              },
+              {
+                "permission": "user:read:list_users:admin"
+              },
+              {
+                "permission": "user:write:user:admin"
+              }
+            ]
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC",
+        "CAPABILITY_PROVISION"
+      ],
+      "permissions": {
+        "permissions": [
+          {
+            "permission": "user:read:user:admin"
+          },
+          {
+            "permission": "user:read:list_users:admin"
+          },
+          {
+            "permission": "user:write:user:admin"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType": {
         "id": "role",
         "displayName": "Role",
         "traits": [
