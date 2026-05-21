@@ -138,6 +138,9 @@
       "resourceType": {
         "id": "license",
         "displayName": "License",
+        "traits": [
+          "TRAIT_LICENSE_PROFILE"
+        ],
         "annotations": [
           {
             "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
@@ -147,17 +150,13 @@
               },
               {
                 "permission": "user:read:list_users:admin"
-              },
-              {
-                "permission": "user:write:user:admin"
               }
             ]
           }
         ]
       },
       "capabilities": [
-        "CAPABILITY_SYNC",
-        "CAPABILITY_PROVISION"
+        "CAPABILITY_SYNC"
       ],
       "permissions": {
         "permissions": [
@@ -166,9 +165,6 @@
           },
           {
             "permission": "user:read:list_users:admin"
-          },
-          {
-            "permission": "user:write:user:admin"
           }
         ]
       }
@@ -245,9 +241,6 @@
                 "permission": "user:delete:user:admin"
               }
             ]
-          },
-          {
-            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
           }
         ]
       },

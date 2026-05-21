@@ -98,3 +98,20 @@ type GroupMember struct {
 	Name string `json:"name"`
 	Type int    `json:"type"`
 }
+
+type Plan struct {
+	Type  string `json:"type,omitempty"`
+	Hosts int    `json:"hosts,omitempty"`
+	Usage int    `json:"usage,omitempty"`
+}
+
+type LicenseUsage struct {
+	PlanBase           *Plan   `json:"plan_base,omitempty"`
+	PlanUnited         *Plan   `json:"plan_united,omitempty"`
+	PlanZoomRooms      *Plan   `json:"plan_zoom_rooms,omitempty"`
+	PlanLargeMeeting   []*Plan `json:"plan_large_meeting,omitempty"`
+	PlanWebinar        []*Plan `json:"plan_webinar,omitempty"`
+	PlanCloudRecording *Plan   `json:"plan_cloud_recording,omitempty"`
+	PlanAudio          *Plan   `json:"plan_audio,omitempty"`
+	PlanRecording      *Plan   `json:"plan_recording,omitempty"`
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 )
@@ -29,6 +30,7 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		lastNameKey:  user.LastName,
 		"login":      user.Email,
 		"user_id":    user.ID,
+		"user_type":  user.Type,
 	}
 
 	var userStatus v2.UserTrait_Status_Status
@@ -125,8 +127,29 @@ func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ res
 	return nil, &resource.SyncOpResults{}, nil
 }
 
-func (u *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	return nil, &resource.SyncOpResults{}, nil
+// all the licensed users consume plan_base license.
+func (u *userResourceType) Grants(_ context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	traits, err := resource.GetUserTrait(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("baton-zoom: failed to get user trait: %w", err)
+	}
+
+	userTypeVal, ok := traits.GetProfile().GetFields()["user_type"]
+	if !ok {
+		return nil, &resource.SyncOpResults{}, nil
+	}
+
+	if zoom.UserType(userTypeVal.GetNumberValue()) != zoom.LicensedUser {
+		return nil, &resource.SyncOpResults{}, nil
+	}
+
+	licenseRes := &v2.Resource{
+		Id: &v2.ResourceId{
+			ResourceType: resourceTypeLicense.Id,
+			Resource:     "plan_base",
+		},
+	}
+	return []*v2.Grant{grant.NewGrant(licenseRes, assignedEntitlement, r.Id)}, &resource.SyncOpResults{}, nil
 }
 
 func (u *userResourceType) CreateAccountCapabilityDetails(_ context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {

@@ -30,7 +30,6 @@ var (
 					{Permission: "user:delete:user:admin"},
 				},
 			},
-			&v2.SkipEntitlementsAndGrants{},
 		),
 	}
 	resourceTypeGroup = &v2.ResourceType{
@@ -97,11 +96,13 @@ var (
 	resourceTypeLicense = &v2.ResourceType{
 		Id:          "license",
 		DisplayName: "License",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_LICENSE_PROFILE,
+		},
 		Annotations: annotations.New(&v2.CapabilityPermissions{
 			Permissions: []*v2.CapabilityPermission{
 				{Permission: "user:read:user:admin"},
 				{Permission: "user:read:list_users:admin"},
-				{Permission: "user:write:user:admin"},
 			},
 		}),
 	}
@@ -217,6 +218,6 @@ func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceS
 		groupBuilder(z.client),
 		roleBuilder(z.client),
 		contactGroupBuilder(z.client),
-		licenseBuilder(z.client, z.syncInactiveUsers),
+		licenseBuilder(z.client),
 	}
 }

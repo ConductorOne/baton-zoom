@@ -246,6 +246,19 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 	return res.Members, "", resp, nil
 }
 
+// GetLicenses returns the account's plan usage data.
+func (c *Client) GetLicenses(ctx context.Context) (*LicenseUsage, *http.Response, error) {
+	url := fmt.Sprint(c.baseURL, "/accounts/me/plans/usage")
+	var res LicenseUsage
+
+	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &res, resp, nil
+}
+
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
 	url := fmt.Sprint(c.baseURL, "/users/", userId)
@@ -384,25 +397,6 @@ func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error 
 		return err
 	}
 
-	defer resp.Body.Close()
-
-	return nil
-}
-
-func (c *Client) UpdateUserType(ctx context.Context, userId string, userType int) error {
-	requestURL := fmt.Sprintf("%s/users/%s", c.baseURL, userId)
-
-	requestBody, err := json.Marshal(map[string]interface{}{
-		"type": userType,
-	})
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodPatch, nil, requestBody)
-	if err != nil {
-		return err
-	}
 	defer resp.Body.Close()
 
 	return nil
