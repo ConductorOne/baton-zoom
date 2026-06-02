@@ -24,7 +24,7 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for a Zoom user.
 func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		firstNameKey: user.FirstName,
 		lastNameKey:  user.LastName,
 		"login":      user.Email,
@@ -36,7 +36,7 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 	switch user.Status {
 	case userStatusInactive:
 		userStatus = v2.UserTrait_Status_STATUS_DISABLED
-	case "active":
+	case userStatusActive:
 		userStatus = v2.UserTrait_Status_STATUS_ENABLED
 	default:
 		userStatus = v2.UserTrait_Status_STATUS_UNSPECIFIED
@@ -78,7 +78,7 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 		if u.syncInactiveUsers {
 			b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusInactive})
 		}
-		b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: "active"})
+		b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusActive})
 	}
 
 	status := b.Current().ResourceID

@@ -31,7 +31,7 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for a Zoom group.
 func groupResource(group zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		"group_name": group.Name,
 		"group_id":   group.ID,
 	}

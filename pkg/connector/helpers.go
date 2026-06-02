@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	firstNameKey = "first_name"
-	lastNameKey  = "last_name"
+	firstNameKey       = "first_name"
+	lastNameKey        = "last_name"
+	userStatusActive   = "active"
+	userStatusInactive = "inactive"
 )
 
 func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, string, error) {
@@ -86,4 +88,3 @@ func parseResp(resp *http.Response) (annotations.Annotations, error) {
 
 	return annos, nil
 }
-

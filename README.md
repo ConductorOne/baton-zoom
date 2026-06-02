@@ -1,5 +1,6 @@
 # baton-zoom
-`baton-zoom` is a connector for Zoom built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the Zoom API to sync data about users, groups and roles.
+
+`baton-zoom` is a connector for Zoom built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the Zoom API to sync data about users, groups, roles and license tiers.
 
 Check out [Baton](https://github.com/conductorone/baton) to learn more the project in general.
 
@@ -9,7 +10,9 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 
 1. Zoom [server to server app](https://developers.zoom.us/docs/internal-apps/create/) created in [marketplace](https://marketplace.zoom.us/)
 2. Scopes for syncing only(no provisioning):
+
 - contact_group:read:list_groups:admin
+- contact_group:read:list_members:admin
 - group:read:list_groups:admin
 - group:read:list_members:admin
 - group:read:administrator:admin
@@ -17,17 +20,36 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 - role:read:list_members:admin
 - user:read:user:admin
 - user:read:list_users:admin
+- billing:read:plan_usage:admin (optional, used to surface purchased vs. consumed Licensed seat counts)
 
 Scopes for provisioning (grant/revoke)
+
 - role:write:member:admin
 - role:delete:member:admin
 - group:write:member:admin
 - group:delete:member:admin
-- user:write:user:admin
+- group:write:administrator:admin
+- group:delete:administrator:admin
+- user:write:user:admin (create users)
+- user:update:user:admin (assign/revoke license tier via PATCH /v2/users/{userId})
 - user:delete:user:admin
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
+
+## License tiers
+
+The connector models Zoom's three user license tiers as a `license` resource type:
+
+| Tier     | Zoom `type` | Consumes a seat?          |
+| -------- | ----------- | ------------------------- |
+| Basic    | `1`         | No                        |
+| Licensed | `2`         | Yes                       |
+| On-Prem  | `3`         | No (managed off-platform) |
+
+Granting a license PATCHes the user's `type` field to the target tier. Revoking a license is a downgrade to Basic — Zoom has no "no license" state, and Basic is the floor. Revoking a Basic grant is a no-op since Basic does not occupy a seat.
+
+When the `billing:read:plan_usage:admin` scope is granted, the Licensed resource is decorated with `purchased_seats` and `consumed_seats` (from `GET /v2/accounts/me/plans/usage` → `plan_base.hosts` / `plan_base.usage`). Without the scope, sync still succeeds — only the seat counts are omitted.
 
 ## brew
 
@@ -57,11 +79,13 @@ baton resources
 # Data Model
 
 `baton-zoom` pulls down information about the following Zoom resources:
+
 - Users
 - Invites (pending users)
 - Groups
 - Contact Groups
 - Roles
+- Licenses (Basic / Licensed / On-Prem)
 
 # Contributing, Support, and Issues
 

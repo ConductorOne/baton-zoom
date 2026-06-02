@@ -12,90 +12,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 )
 
-const userStatusInactive = "inactive"
-
-var (
-	resourceTypeUser = &v2.ResourceType{
-		Id:          "user",
-		DisplayName: "User",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_USER,
-		},
-		Annotations: annotations.New(
-			&v2.CapabilityPermissions{
-				Permissions: []*v2.CapabilityPermission{
-					{Permission: "user:read:user:admin"},
-					{Permission: "user:read:list_users:admin"},
-					{Permission: "user:write:user:admin"},
-					{Permission: "user:delete:user:admin"},
-				},
-			},
-			&v2.SkipEntitlementsAndGrants{},
-		),
-	}
-	resourceTypeGroup = &v2.ResourceType{
-		Id:          "group",
-		DisplayName: "Group",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_GROUP,
-		},
-		Annotations: annotations.New(&v2.CapabilityPermissions{
-			Permissions: []*v2.CapabilityPermission{
-				{Permission: "group:read:list_groups:admin"},
-				{Permission: "group:read:list_members:admin"},
-				{Permission: "group:read:administrator:admin"},
-				{Permission: "group:write:member:admin"},
-				{Permission: "group:delete:member:admin"},
-				{Permission: "group:write:administrator:admin"},
-				{Permission: "group:delete:administrator:admin"},
-			},
-		}),
-	}
-	resourceTypeContactGroup = &v2.ResourceType{
-		Id:          "contactGroup",
-		DisplayName: "Contact Group",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_GROUP,
-		},
-		Annotations: annotations.New(&v2.CapabilityPermissions{
-			Permissions: []*v2.CapabilityPermission{
-				{Permission: "contact_group:read:list_groups:admin"},
-				{Permission: "contact_group:read:list_members:admin"},
-			},
-		}),
-	}
-	resourceTypeInvite = &v2.ResourceType{
-		Id:          "invite",
-		DisplayName: "Invite",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_USER,
-		},
-		Annotations: annotations.New(
-			&v2.CapabilityPermissions{
-				Permissions: []*v2.CapabilityPermission{
-					{Permission: "user:read:list_users:admin"},
-				},
-			},
-			&v2.SkipEntitlementsAndGrants{},
-		),
-	}
-	resourceTypeRole = &v2.ResourceType{
-		Id:          "role",
-		DisplayName: "Role",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_ROLE,
-		},
-		Annotations: annotations.New(&v2.CapabilityPermissions{
-			Permissions: []*v2.CapabilityPermission{
-				{Permission: "role:read:list_roles:admin"},
-				{Permission: "role:read:list_members:admin"},
-				{Permission: "role:write:member:admin"},
-				{Permission: "role:delete:member:admin"},
-			},
-		}),
-	}
-)
-
 type Zoom struct {
 	client            *zoom.Client
 	syncInactiveUsers bool
@@ -132,7 +48,7 @@ func New(
 func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "Zoom",
-		Description: "Connector syncing users, groups, roles and contact groups from Zoom to Baton.",
+		Description: "Connector syncing users, groups, roles, contact groups, and license tiers from Zoom to Baton.",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 				"email": {
@@ -206,5 +122,6 @@ func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceS
 		groupBuilder(z.client),
 		roleBuilder(z.client),
 		contactGroupBuilder(z.client),
+		licenseBuilder(z.client, z.syncInactiveUsers),
 	}
 }

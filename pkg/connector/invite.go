@@ -20,7 +20,7 @@ func (i *inviteResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 // inviteResource creates a connector resource for a pending Zoom user (invite).
 // Pending users have no Zoom ID yet, so the email is used as the stable resource identifier.
 func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		firstNameKey: user.FirstName,
 		lastNameKey:  user.LastName,
 		"login":      user.Email,

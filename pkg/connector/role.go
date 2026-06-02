@@ -30,7 +30,7 @@ func (r *roleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for a Zoom role.
 func roleResource(role zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		"role_name": role.Name,
 		"role_id":   role.ID,
 	}

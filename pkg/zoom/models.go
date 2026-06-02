@@ -9,10 +9,12 @@ const (
 	CustCreateUser ActionType = "custCreate"
 	SSOCreate      ActionType = "ssoCreate"
 
-	BasicUser      UserType = 1
-	LicensedUser   UserType = 2
-	UnnasignedUser UserType = 3
-	NoneUser       UserType = 99
+	// Zoom user license tiers exposed by the `type` field on GET /v2/users.
+	// Source: https://developers.zoom.us/docs/api/users/
+	BasicUser    UserType = 1
+	LicensedUser UserType = 2
+	OnPremUser   UserType = 3
+	NoneUser     UserType = 99
 )
 
 type Group struct {
@@ -97,4 +99,28 @@ type GroupMember struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Type int    `json:"type"`
+}
+
+// PlanBase describes the base plan slot from GET /v2/accounts/me/plans/usage.
+// Hosts is the number of purchased Licensed seats; Usage is the number of
+// consumed Licensed seats. Pending is the count queued by an admin but not
+// yet applied.
+type PlanBase struct {
+	Type    string `json:"type"`
+	Hosts   int    `json:"hosts"`
+	Usage   int    `json:"usage"`
+	Pending int    `json:"pending"`
+}
+
+// PlanUsage is the minimal projection of the plan usage payload that this
+// connector consumes. Zoom returns many additional fields (recording, room,
+// webinar, etc.) that we deliberately ignore.
+type PlanUsage struct {
+	PlanBase PlanBase `json:"plan_base"`
+}
+
+// UserPatchBody is the body sent to PATCH /v2/users/{userId} when changing a
+// user's license tier. A 204 No Content response indicates success.
+type UserPatchBody struct {
+	Type UserType `json:"type"`
 }
