@@ -234,16 +234,14 @@ func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource,
 	return nil, nil, nil
 }
 
-// Revoke removes a license by downgrading the user back to Basic. Zoom has
-// no concept of "no license" — Basic is the floor tier — so Revoke is
-// implemented as PATCH `type=1`.
+// Revoke downgrades the user to Basic via PATCH `type=1` (Zoom has no
+// "no license" state — Basic is the floor tier).
 //
-// Idempotency follows the "Role Idempotency via User State" pattern from the
-// baton-provisioning skill: a pre-flight GET short-circuits with
-// GrantAlreadyRevoked when the user no longer holds the tier being revoked.
+// Returns GrantAlreadyRevoked without an API call when:
+//   1. The user no longer holds the tier being revoked.
+//   2. The tier being revoked is Basic — no lower tier exists, so it's a no-op.
 //
-// Every other rejection (deactivated user, etc.) is propagated from Zoom
-// verbatim. The connector does not pre-judge user state.
+// All other Zoom errors are propagated verbatim.
 func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	logger := ctxzap.Extract(ctx)
 
@@ -274,6 +272,10 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 	resp.Body.Close()
 
 	if user.Type != grantedType {
+		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+	}
+
+	if grantedType == int(zoom.BasicUser) {
 		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 	}
 
