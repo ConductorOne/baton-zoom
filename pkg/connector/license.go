@@ -1,5 +1,76 @@
 package connector
 
+// License management for the Zoom connector.
+//
+// Endpoints used:
+//   - GET   /v2/users                       - List users; User.type carries the per-user license tier
+//   - GET   /v2/users/{userId}              - Pre-flight check before Grant/Revoke (idempotency)
+//   - GET   /v2/accounts/me/plans/usage     - Account-level seat counts for the Licensed tier
+//   - PATCH /v2/users/{userId}              - Change a user's tier (Grant / Revoke)
+//
+// Authentication: Server-to-Server OAuth, granular scopes:
+//   - user:read:list_users:admin    - List users
+//   - user:read:user:admin          - Get a single user (pre-flight before PATCH)
+//   - user:update:user:admin        - PATCH a user's tier
+//   - billing:read:plan_usage:admin - Plan usage (optional; enables Licensed seat counts)
+//
+// Official API references:
+//   - Users API:        https://developers.zoom.us/docs/api/users/
+//   - Update User:      https://developers.zoom.us/docs/api/users/#tag/users/patch/users/{userId}
+//   - Plan Usage:       https://developers.zoom.us/docs/api/billing/ma/
+//   - Remaining seats:  https://devforum.zoom.us/t/30341  (community-validated formula)
+//
+// How Zoom licensing works (and how this connector models it):
+//
+//  1. License tier is a USER property, not a separate resource. Each user has
+//     a `type` field on GET /v2/users with one of these values:
+//
+//       type=1  Basic     - Free tier, uncapped, anyone can sign up. Floor tier.
+//       type=2  Licensed  - Paid base-plan seat (consumes 1 from plan_base).
+//       type=3  On-Prem   - Provisioned via Meeting Connector (self-hosted).
+//       type=99 None      - No license assigned (transitional, rare).
+//
+//  2. Zoom does NOT expose a /licenses endpoint. The 3 tiers are fixed and the
+//     API references them only by integer code, so this connector models them
+//     as STATIC resources hardcoded in licenseDefinitions.
+//
+//  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants (using
+//     User.type stashed in the user profile during List), not from
+//     licenseResourceType.Grants. Each user holds exactly one tier, so a
+//     single user pagination sweep produces all license grants — emitting
+//     from the license side would require an O(N × tiers) scan.
+//
+//  4. Seat counts only attach to the Licensed tier resource:
+//
+//       plan_base.hosts = Licensed seats purchased (the cap)
+//       plan_base.usage = Licensed seats consumed  (= count(User.type == 2))
+//
+//     Basic is uncapped (Zoom doesn't track it; nothing to surface). On-Prem
+//     is provisioned outside Zoom Cloud (the billing API has no visibility
+//     into it). The identity plan_base.usage == count(User.type == 2) was
+//     validated end-to-end against a live Business-Monthly tenant on every
+//     state transition (Grant → usage++; Revoke → usage--; idempotent
+//     re-Grant/Revoke → no change).
+//
+//  5. Grant / Revoke both PATCH /v2/users/{userId} with {"type": N}. Revoke
+//     downgrades to Basic because Zoom has no "no license" state — Basic is
+//     the floor tier. Three short-circuits keep the operations idempotent
+//     (each backed by a single pre-flight GET, no extra PATCH):
+//
+//       Grant of the user's current tier         → GrantAlreadyExists,  no PATCH
+//       Revoke of a tier the user no longer holds → GrantAlreadyRevoked, no PATCH
+//       Revoke of Basic (the floor tier)         → GrantAlreadyRevoked, no PATCH
+//
+// Out of scope (deliberately not modeled in C1):
+//   - Add-on plan seats (plan_webinar, plan_large_meeting, plan_zoom_one,
+//     plan_phone, plan_recording, ...): they don't change User.type and
+//     aren't grantable as identity entitlements.
+//   - Master account / reseller flows: /plans/usage returns plan_base as
+//     an array there with active_hosts in place of usage. This connector
+//     assumes the "accounts/me" sub-account shape.
+//   - On-Prem deployment internals: Meeting Connector is self-hosted and
+//     opaque to the billing API.
+
 import (
 	"context"
 	"fmt"
@@ -7,9 +78,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -20,16 +89,14 @@ const (
 	assignedEntitlement = "assigned"
 )
 
-// licenseDefinition describes one of Zoom's three license tiers. Zoom does
-// not expose a "list licenses" endpoint — the tiers are fixed and the API
-// references them by integer code on the User.type field.
+// licenseDefinition is one Zoom license tier (id + display name).
 type licenseDefinition struct {
 	id   zoom.UserType
 	name string
 }
 
-// licenseDefinitions enumerates the tiers we model. Order is preserved when
-// rendering List results for deterministic output.
+// licenseDefinitions is the static catalog of tiers we model. Order is
+// preserved on List for deterministic output.
 var licenseDefinitions = []licenseDefinition{
 	{id: zoom.BasicUser, name: "Basic"},
 	{id: zoom.LicensedUser, name: "Licensed"},
@@ -37,22 +104,30 @@ var licenseDefinitions = []licenseDefinition{
 }
 
 type licenseResourceType struct {
-	resourceType      *v2.ResourceType
-	client            *zoom.Client
-	syncInactiveUsers bool
+	resourceType *v2.ResourceType
+	client       *zoom.Client
 }
 
 func (l *licenseResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return l.resourceType
 }
 
-// licenseResource builds a connector resource for a single Zoom license
-// tier. Purchased and consumed seat counts come from
-// GET /v2/accounts/me/plans/usage and are only meaningful for the Licensed
-// tier (Basic seats are free and On-Prem is provisioned outside Zoom Cloud).
+// licenseResource builds a connector resource for one license tier.
+// Seat counts attach only to the Licensed tier. EntitlementIDs links
+// the seat counts back to the grants that consume them so the C1 App
+// Utilization feature (CE-720) can map consumed_seats to user grants
+// without manual entitlement mapping.
 func licenseResource(def licenseDefinition, purchased, consumed int64) (*v2.Resource, error) {
+	licenseID := strconv.Itoa(int(def.id))
+
+	assignedEntitlementID := ent.NewEntitlementID(
+		&v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeLicense.Id, Resource: licenseID}},
+		assignedEntitlement,
+	)
+
 	licenseOpts := []resource.LicenseProfileTraitOption{
 		resource.WithLicenseName(def.name),
+		resource.WithLicenseEntitlementIDs(assignedEntitlementID),
 	}
 
 	if def.id == zoom.LicensedUser && purchased > 0 {
@@ -62,16 +137,14 @@ func licenseResource(def licenseDefinition, purchased, consumed int64) (*v2.Reso
 	return resource.NewResource(
 		def.name,
 		resourceTypeLicense,
-		strconv.Itoa(int(def.id)),
+		licenseID,
 		resource.WithLicenseProfileTrait(licenseOpts...),
 	)
 }
 
-// List returns the three static license tiers. Seat counts for the Licensed
-// tier are best-effort: if the billing scope is missing or the call fails
-// the tier is still emitted, just without seat numbers. This keeps sync
-// usable for accounts where the operator hasn't (yet) granted
-// billing:read:plan_usage:admin.
+// List returns the three static license tiers. The plan_base fetch is
+// best-effort: if the billing scope is missing or the call fails, the
+// tiers are still emitted, just without seat numbers on Licensed.
 func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	logger := ctxzap.Extract(ctx)
 
@@ -81,8 +154,6 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 		defer resp.Body.Close()
 	}
 	if err != nil {
-		// Treat plan-usage failures as non-fatal: seat counts are an
-		// observability nicety, not required for grant evaluation.
 		logger.Warn(
 			"baton-zoom: failed to fetch plan usage; emitting licenses without seat counts",
 			zap.Error(err),
@@ -109,10 +180,8 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 	return rv, &resource.SyncOpResults{Annotations: annos}, nil
 }
 
-// Entitlements emits a single "assigned" assignment-purpose entitlement per
-// license tier. Each Zoom user holds exactly one license at a time, so
-// grants are mutually exclusive across tiers but expressed as independent
-// entitlements per resource.
+// Entitlements emits the single "assigned" assignment-purpose entitlement
+// per license tier (each user holds exactly one tier).
 func (l *licenseResourceType) Entitlements(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
 	opts := []ent.EntitlementOption{
 		ent.WithGrantableTo(resourceTypeUser),
@@ -124,89 +193,17 @@ func (l *licenseResourceType) Entitlements(_ context.Context, res *v2.Resource, 
 	return []*v2.Entitlement{en}, &resource.SyncOpResults{}, nil
 }
 
-// Grants paginates over Zoom users (active, plus inactive when configured)
-// and emits one grant per user whose User.type matches the license tier
-// being synced. The same status-stack pagination pattern used by userResourceType
-// is used here to avoid an extra GET /v2/users/{id} per user.
-func (l *licenseResourceType) Grants(ctx context.Context, res *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	licenseID, err := strconv.Atoi(res.Id.Resource)
-	if err != nil {
-		return nil, nil, fmt.Errorf("baton-zoom: invalid license resource id %q: %w", res.Id.Resource, err)
-	}
-
-	bag := &pagination.Bag{}
-	if err := bag.Unmarshal(opts.PageToken.Token); err != nil {
-		return nil, nil, err
-	}
-
-	if bag.Current() == nil {
-		if l.syncInactiveUsers {
-			bag.Push(pagination.PageState{ResourceTypeID: resourceTypeLicense.Id, ResourceID: userStatusInactive})
-		}
-		bag.Push(pagination.PageState{ResourceTypeID: resourceTypeLicense.Id, ResourceID: userStatusActive})
-	}
-
-	status := bag.Current().ResourceID
-	page := bag.PageToken()
-
-	users, nextPage, resp, err := l.client.GetUsers(ctx, page, status)
-	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	if err := bag.Next(nextPage); err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := bag.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var rv []*v2.Grant
-	for _, u := range users {
-		if u.Type != licenseID {
-			continue
-		}
-		principalID := &v2.ResourceId{
-			ResourceType: resourceTypeUser.Id,
-			Resource:     u.ID,
-		}
-		rv = append(rv, grant.NewGrant(res, assignedEntitlement, principalID))
-	}
-
-	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
+// Grants is a no-op: license grants are emitted from userBuilder.Grants.
+func (l *licenseResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	return nil, &resource.SyncOpResults{}, nil
 }
 
-// Grant applies a license by PATCHing the user's `type` field.
-//
-// Idempotency follows the "Role Idempotency via User State" pattern from the
-// baton-provisioning skill: a pre-flight GET resolves the user's current tier
-// and short-circuits with GrantAlreadyExists when the target tier already
-// matches, avoiding an unnecessary PATCH.
-//
-// Every other rejection (deactivated user, missing scope, malformed payload,
-// etc.) is left to the Zoom API and propagated verbatim. The connector does
-// not pre-judge user state — Zoom is the source of truth.
+// Grant assigns a license tier to a user via PATCH /v2/users/{userId}.
+// A pre-flight GET resolves the current tier and short-circuits with
+// GrantAlreadyExists when the target tier already matches.
 func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	logger := ctxzap.Extract(ctx)
-
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		logger.Warn(
-			"baton-zoom: only users can be granted a license",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted a license")
+		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted a license (got %q)", principal.Id.ResourceType)
 	}
 
 	targetType, err := strconv.Atoi(entitlement.Resource.Id.Resource)
@@ -234,27 +231,15 @@ func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource,
 	return nil, nil, nil
 }
 
-// Revoke downgrades the user to Basic via PATCH `type=1` (Zoom has no
-// "no license" state — Basic is the floor tier).
-//
-// Returns GrantAlreadyRevoked without an API call when:
-//   1. The user no longer holds the tier being revoked.
-//   2. The tier being revoked is Basic — no lower tier exists, so it's a no-op.
-//
-// All other Zoom errors are propagated verbatim.
+// Revoke downgrades the user to Basic via PATCH (Zoom has no "no license"
+// state). Returns GrantAlreadyRevoked without an API call when the user
+// no longer holds the tier or when the revoked tier is Basic itself.
 func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
-	logger := ctxzap.Extract(ctx)
-
 	entitlement := g.Entitlement
 	principal := g.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		logger.Warn(
-			"baton-zoom: only users can have a license revoked",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, fmt.Errorf("baton-zoom: only users can have a license revoked")
+		return nil, fmt.Errorf("baton-zoom: only users can have a license revoked (got %q)", principal.Id.ResourceType)
 	}
 
 	grantedType, err := strconv.Atoi(entitlement.Resource.Id.Resource)
@@ -286,10 +271,9 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 	return nil, nil
 }
 
-func licenseBuilder(client *zoom.Client, syncInactiveUsers bool) *licenseResourceType {
+func licenseBuilder(client *zoom.Client) *licenseResourceType {
 	return &licenseResourceType{
-		resourceType:      resourceTypeLicense,
-		client:            client,
-		syncInactiveUsers: syncInactiveUsers,
+		resourceType: resourceTypeLicense,
+		client:       client,
 	}
 }

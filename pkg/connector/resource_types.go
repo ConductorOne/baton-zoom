@@ -44,7 +44,7 @@ var (
 				scopeUserWrite,
 				scopeUserDelete,
 			),
-			&v2.SkipEntitlementsAndGrants{},
+			&v2.SkipEntitlements{},
 		),
 	}
 
@@ -122,6 +122,7 @@ var (
 				scopeUserUpdate,
 				scopeBillingRead,
 			),
+			&v2.SkipGrants{},
 		),
 	}
 )

@@ -3,13 +3,22 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+)
+
+const (
+	// userTypeProfileKey carries the user's Zoom license tier (User.type) on
+	// the user resource profile so userBuilder.Grants can emit the
+	// principal-side license grant without an extra GET /v2/users/{id} call.
+	userTypeProfileKey = "type"
 )
 
 type userResourceType struct {
@@ -25,10 +34,11 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 // Create a new connector resource for a Zoom user.
 func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]any{
-		firstNameKey: user.FirstName,
-		lastNameKey:  user.LastName,
-		"login":      user.Email,
-		"user_id":    user.ID,
+		firstNameKey:       user.FirstName,
+		lastNameKey:        user.LastName,
+		"login":            user.Email,
+		"user_id":          user.ID,
+		userTypeProfileKey: int64(user.Type),
 	}
 
 	var userStatus v2.UserTrait_Status_Status
@@ -125,8 +135,65 @@ func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ res
 	return nil, &resource.SyncOpResults{}, nil
 }
 
-func (u *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	return nil, &resource.SyncOpResults{}, nil
+// Grants emits the principal-side license grant for a single user resource.
+// License is a derived resource type (no /licenses endpoint in Zoom), so its
+// grants are produced from the user side using the User.type value stashed in
+// the resource profile during List(). NoneUser (99) and unknown enum values
+// yield no grant — the matching License resource was never listed, so
+// emitting one would dangle.
+func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	userTrait, err := resource.GetUserTrait(res)
+	if err != nil {
+		return nil, nil, fmt.Errorf("baton-zoom: failed to read user trait while emitting license grant: %w", err)
+	}
+
+	profile := userTrait.GetProfile().AsMap()
+	rawType, ok := profile[userTypeProfileKey]
+	if !ok {
+		return nil, &resource.SyncOpResults{}, nil
+	}
+
+	// structpb decodes JSON numbers as float64; the int / int64 branches
+	// cover the unlikely path where the profile is constructed in-process
+	// without going through a JSON round-trip.
+	var userType int
+	switch v := rawType.(type) {
+	case float64:
+		userType = int(v)
+	case int:
+		userType = v
+	case int64:
+		userType = int(v)
+	default:
+		return nil, &resource.SyncOpResults{}, nil
+	}
+
+	if !isLicenseTier(zoom.UserType(userType)) {
+		return nil, &resource.SyncOpResults{}, nil
+	}
+
+	licenseResource := &v2.Resource{
+		Id: &v2.ResourceId{
+			ResourceType: resourceTypeLicense.Id,
+			Resource:     strconv.Itoa(userType),
+		},
+	}
+
+	return []*v2.Grant{
+		grant.NewGrant(licenseResource, assignedEntitlement, res.Id),
+	}, &resource.SyncOpResults{}, nil
+}
+
+// isLicenseTier reports whether the given Zoom user type maps to a License
+// resource we sync. Basic / Licensed / On-Prem are tiers; NoneUser (99) is
+// "no license" and any unknown value is treated as such.
+func isLicenseTier(t zoom.UserType) bool {
+	switch t {
+	case zoom.BasicUser, zoom.LicensedUser, zoom.OnPremUser:
+		return true
+	default:
+		return false
+	}
 }
 
 func (u *userResourceType) CreateAccountCapabilityDetails(_ context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {

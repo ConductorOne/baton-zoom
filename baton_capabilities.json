@@ -158,6 +158,9 @@
                 "permission": "billing:read:plan_usage:admin"
               }
             ]
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipGrants"
           }
         ]
       },
@@ -256,7 +259,7 @@
             ]
           },
           {
-            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlements"
           }
         ]
       },

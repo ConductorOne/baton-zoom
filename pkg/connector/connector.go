@@ -122,6 +122,6 @@ func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceS
 		groupBuilder(z.client),
 		roleBuilder(z.client),
 		contactGroupBuilder(z.client),
-		licenseBuilder(z.client, z.syncInactiveUsers),
+		licenseBuilder(z.client),
 	}
 }
