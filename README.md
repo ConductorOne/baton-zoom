@@ -41,11 +41,11 @@ Scopes for provisioning (grant/revoke)
 
 The connector models Zoom's three user license tiers as a `license` resource type:
 
-| Tier     | Zoom `type` | Consumes a seat?          |
-| -------- | ----------- | ------------------------- |
-| Basic    | `1`         | No                        |
-| Licensed | `2`         | Yes                       |
-| On-Prem  | `3`         | No (managed off-platform) |
+| Tier       | Zoom `type` | Consumes a seat?         |
+| ---------- | ----------- | ------------------------ |
+| Basic      | `1`         | No                       |
+| Licensed   | `2`         | Yes                      |
+| Unassigned | `4`         | No (no meetings license) |
 
 Granting a license PATCHes the user's `type` field to the target tier. Revoking a license is a downgrade to Basic — Zoom has no "no license" state, and Basic is the floor. Revoking a Basic grant is a no-op since Basic does not occupy a seat.
 
@@ -85,7 +85,7 @@ baton resources
 - Groups
 - Contact Groups
 - Roles
-- Licenses (Basic / Licensed / On-Prem)
+- Licenses (Basic / Licensed / Unassigned)
 
 # Contributing, Support, and Issues
 

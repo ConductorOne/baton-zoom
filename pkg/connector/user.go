@@ -138,7 +138,7 @@ func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ res
 // Grants emits the principal-side license grant for a single user resource.
 // License is a derived resource type (no /licenses endpoint in Zoom), so its
 // grants are produced from the user side using the User.type value stashed in
-// the resource profile during List(). NoneUser (99) and unknown enum values
+// the resource profile during List(). Values outside the modeled tiers
 // yield no grant — the matching License resource was never listed, so
 // emitting one would dangle.
 func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
@@ -185,11 +185,11 @@ func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resourc
 }
 
 // isLicenseTier reports whether the given Zoom user type maps to a License
-// resource we sync. Basic / Licensed / On-Prem are tiers; NoneUser (99) is
-// "no license" and any unknown value is treated as such.
+// resource we sync. Basic / Licensed / Unassigned are the modeled tiers;
+// any other value is treated as "no license".
 func isLicenseTier(t zoom.UserType) bool {
 	switch t {
-	case zoom.BasicUser, zoom.LicensedUser, zoom.OnPremUser:
+	case zoom.BasicUser, zoom.LicensedUser, zoom.UnassignedUser:
 		return true
 	default:
 		return false

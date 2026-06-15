@@ -10,11 +10,12 @@ const (
 	SSOCreate      ActionType = "ssoCreate"
 
 	// Zoom user license tiers exposed by the `type` field on GET /v2/users.
-	// Source: https://developers.zoom.us/docs/api/users/
-	BasicUser    UserType = 1
-	LicensedUser UserType = 2
-	OnPremUser   UserType = 3
-	NoneUser     UserType = 99
+	// The API enum is 1, 2, 4, 99; type=99 (None) is settable only via the
+	// ssoCreate action (never via PATCH), so only the PATCH-assignable tiers
+	// are modeled here. Source: https://developers.zoom.us/docs/api/users/
+	BasicUser      UserType = 1
+	LicensedUser   UserType = 2
+	UnassignedUser UserType = 4 // "Unassigned without Meetings Basic" (aka No Meetings License)
 )
 
 type Group struct {

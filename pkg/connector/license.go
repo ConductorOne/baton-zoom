@@ -18,21 +18,28 @@ package connector
 //   - Users API:        https://developers.zoom.us/docs/api/users/
 //   - Update User:      https://developers.zoom.us/docs/api/users/#tag/users/patch/users/{userId}
 //   - Plan Usage:       https://developers.zoom.us/docs/api/billing/ma/
-//   - Remaining seats:  https://devforum.zoom.us/t/30341  (community-validated formula)
 //
 // How Zoom licensing works (and how this connector models it):
 //
 //  1. License tier is a USER property, not a separate resource. Each user has
 //     a `type` field on GET /v2/users with one of these values:
 //
-//       type=1  Basic     - Free tier, uncapped, anyone can sign up. Floor tier.
-//       type=2  Licensed  - Paid base-plan seat (consumes 1 from plan_base).
-//       type=3  On-Prem   - Provisioned via Meeting Connector (self-hosted).
-//       type=99 None      - No license assigned (transitional, rare).
+//       type=1  Basic      - Free tier, uncapped, anyone can sign up. Floor tier.
+//       type=2  Licensed   - Paid base-plan seat (consumes 1 from plan_base).
+//       type=4  Unassigned - "Unassigned without Meetings Basic" (aka No
+//                            Meetings License): the user keeps the account
+//                            seat but holds no meetings license. Settable via
+//                            PATCH like any other tier.
 //
-//  2. Zoom does NOT expose a /licenses endpoint. The 3 tiers are fixed and the
-//     API references them only by integer code, so this connector models them
-//     as STATIC resources hardcoded in licenseDefinitions.
+//     The API enum also includes type=99 (None), but it is settable only at
+//     creation via the ssoCreate action — never via PATCH /v2/users/{userId}
+//     — so it cannot participate in the assign/unassign lifecycle and is not
+//     modeled as a tier. Any value outside 1/2/4 emits no license grant.
+//
+//  2. Zoom does NOT expose a /licenses endpoint. The tiers are fixed and the
+//     API references them only by integer code, so this connector models the
+//     three assignable tiers (1, 2, 4) as STATIC resources hardcoded in
+//     licenseDefinitions.
 //
 //  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants (using
 //     User.type stashed in the user profile during List), not from
@@ -45,12 +52,8 @@ package connector
 //       plan_base.hosts = Licensed seats purchased (the cap)
 //       plan_base.usage = Licensed seats consumed  (= count(User.type == 2))
 //
-//     Basic is uncapped (Zoom doesn't track it; nothing to surface). On-Prem
-//     is provisioned outside Zoom Cloud (the billing API has no visibility
-//     into it). The identity plan_base.usage == count(User.type == 2) was
-//     validated end-to-end against a live Business-Monthly tenant on every
-//     state transition (Grant → usage++; Revoke → usage--; idempotent
-//     re-Grant/Revoke → no change).
+//     Basic is uncapped (Zoom doesn't track it; nothing to surface).
+//     Unassigned holds no meetings license, so there is no seat pool to surface.
 //
 //  5. Grant / Revoke both PATCH /v2/users/{userId} with {"type": N}. Revoke
 //     downgrades to Basic because Zoom has no "no license" state — Basic is
@@ -68,8 +71,6 @@ package connector
 //   - Master account / reseller flows: /plans/usage returns plan_base as
 //     an array there with active_hosts in place of usage. This connector
 //     assumes the "accounts/me" sub-account shape.
-//   - On-Prem deployment internals: Meeting Connector is self-hosted and
-//     opaque to the billing API.
 
 import (
 	"context"
@@ -100,7 +101,7 @@ type licenseDefinition struct {
 var licenseDefinitions = []licenseDefinition{
 	{id: zoom.BasicUser, name: "Basic"},
 	{id: zoom.LicensedUser, name: "Licensed"},
-	{id: zoom.OnPremUser, name: "On-Prem"},
+	{id: zoom.UnassignedUser, name: "Unassigned"},
 }
 
 type licenseResourceType struct {
@@ -114,9 +115,8 @@ func (l *licenseResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // licenseResource builds a connector resource for one license tier.
 // Seat counts attach only to the Licensed tier. EntitlementIDs links
-// the seat counts back to the grants that consume them so the C1 App
-// Utilization feature (CE-720) can map consumed_seats to user grants
-// without manual entitlement mapping.
+// the seat counts to the grants that consume them so C1 can map
+// consumed seats to user grants.
 func licenseResource(def licenseDefinition, purchased, consumed int64) (*v2.Resource, error) {
 	licenseID := strconv.Itoa(int(def.id))
 

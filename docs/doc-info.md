@@ -13,7 +13,7 @@ While developing the connector, please fill out this form. This information is n
 | **Groups**         | `TRAIT_GROUP`           | Zoom Groups with both members and admins as principals.                                                                                                                                                                                      |
 | **Contact Groups** | `TRAIT_GROUP`           | Read-only. Membership includes both users and nested user-groups.                                                                                                                                                                            |
 | **Roles**          | `TRAIT_ROLE`            | A user can hold one role at a time; emits a `member` entitlement.                                                                                                                                                                            |
-| **Licenses**       | `TRAIT_LICENSE_PROFILE` | Static set of 3 tiers: Basic (`1`), Licensed (`2`), On-Prem (`3`). Each emits an `assigned` entitlement. Purchased / consumed seat counts are populated for the **Licensed** tier when the `billing:read:plan_usage:admin` scope is granted. |
+| **Licenses**       | `TRAIT_LICENSE_PROFILE` | Static set of 3 tiers: Basic (`1`), Licensed (`2`), Unassigned (`4`). Each emits an `assigned` entitlement. Purchased / consumed seat counts are populated for the **Licensed** tier when the `billing:read:plan_usage:admin` scope is granted. |
 
 ### 2. Can the connector provision any resources? If so, which ones?
 
@@ -26,7 +26,7 @@ Yes:
 | **Roles**    | Assign/Unassign role to a user                     | `POST /v2/roles/{roleId}/members`; `DELETE /v2/roles/{roleId}/members/{userId}`                         |
 | **Licenses** | Grant (assign a tier), Revoke (downgrade to Basic) | `PATCH /v2/users/{userId}` with body `{"type": N}`                                                      |
 
-**License Revoke semantics:** Zoom has no "no license" state — Basic is the floor and does not consume a seat. Revoking the **Licensed** or **On-Prem** tier downgrades the user back to Basic, freeing the seat. Revoking a **Basic** grant is a logical no-op (returns `GrantAlreadyRevoked` without an API call).
+**License Revoke semantics:** Zoom has no "no license" state — Basic is the floor and does not consume a seat. Revoking the **Licensed** or **Unassigned** tier downgrades the user back to Basic, freeing the seat. Revoking a **Basic** grant is a logical no-op (returns `GrantAlreadyRevoked` without an API call).
 
 Contact Groups are intentionally **read-only** (no membership write endpoints are exposed by Zoom's public API).
 
