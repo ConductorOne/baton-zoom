@@ -268,7 +268,7 @@ func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) er
 		},
 	}
 
-	requestBody, err := json.Marshal(map[string]interface{}{
+	requestBody, err := json.Marshal(map[string]any{
 		"members": members,
 	})
 	if err != nil {
@@ -297,7 +297,7 @@ func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) err
 		},
 	}
 
-	requestBody, err := json.Marshal(map[string]interface{}{
+	requestBody, err := json.Marshal(map[string]any{
 		"admins": members,
 	})
 	if err != nil {
@@ -354,7 +354,7 @@ func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
 		},
 	}
 
-	requestBody, err := json.Marshal(map[string]interface{}{
+	requestBody, err := json.Marshal(map[string]any{
 		"members": members,
 	})
 
@@ -423,6 +423,44 @@ func (c *Client) DeleteUser(ctx context.Context, userId string) error {
 
 	defer resp.Body.Close()
 	return nil
+}
+
+// PatchUserLicense updates a user's license tier via PATCH /v2/users/{userId}.
+// Zoom returns 204 No Content on success and applies any seat consumption or
+// release immediately.
+func (c *Client) PatchUserLicense(ctx context.Context, userId string, licenseType UserType) error {
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	if err != nil {
+		return err
+	}
+
+	requestBody, err := json.Marshal(UserPatchBody{Type: licenseType})
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodPatch, nil, requestBody)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+	return nil
+}
+
+// GetAccountPlanUsage returns the base plan's purchased and consumed seat
+// counts from GET /v2/accounts/me/plans/usage. Requires the
+// `billing:read:plan_usage:admin` scope (or the legacy `billing:read`).
+func (c *Client) GetAccountPlanUsage(ctx context.Context) (*PlanUsage, *http.Response, error) {
+	requestURL := fmt.Sprint(c.baseURL, "/accounts/me/plans/usage")
+	var res PlanUsage
+
+	response, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &res, response, nil
 }
 
 func (c *Client) doRequest(ctx context.Context, url string, res interface{}, method string, params url.Values, payload []byte) (*http.Response, error) {

@@ -136,6 +136,57 @@
     },
     {
       "resourceType": {
+        "id": "license",
+        "displayName": "License",
+        "traits": [
+          "TRAIT_LICENSE_PROFILE"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.CapabilityPermissions",
+            "permissions": [
+              {
+                "permission": "user:read:list_users:admin"
+              },
+              {
+                "permission": "user:read:user:admin"
+              },
+              {
+                "permission": "user:update:user:admin"
+              },
+              {
+                "permission": "billing:read:plan_usage:admin"
+              }
+            ]
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipGrants"
+          }
+        ]
+      },
+      "capabilities": [
+        "CAPABILITY_SYNC",
+        "CAPABILITY_PROVISION"
+      ],
+      "permissions": {
+        "permissions": [
+          {
+            "permission": "user:read:list_users:admin"
+          },
+          {
+            "permission": "user:read:user:admin"
+          },
+          {
+            "permission": "user:update:user:admin"
+          },
+          {
+            "permission": "billing:read:plan_usage:admin"
+          }
+        ]
+      }
+    },
+    {
+      "resourceType": {
         "id": "role",
         "displayName": "Role",
         "traits": [
@@ -208,7 +259,7 @@
             ]
           },
           {
-            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlements"
           }
         ]
       },

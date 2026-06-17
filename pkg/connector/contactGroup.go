@@ -22,7 +22,7 @@ func (g *contactGroupResourceType) ResourceType(_ context.Context) *v2.ResourceT
 
 // Create a new connector resource for a Zoom group.
 func contactGroupResource(group zoom.ContactGroup, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		"group_name": group.Name,
 		"group_id":   group.ID,
 	}

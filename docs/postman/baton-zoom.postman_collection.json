@@ -1,0 +1,438 @@
+{
+	"info": {
+		"_postman_id": "f4e0a7c2-21c5-4f37-9a3a-7c81d1e3f000",
+		"name": "baton-zoom",
+		"description": "Zoom REST API endpoints used by the baton-zoom connector. Covers Server-to-Server OAuth, users, license tier management, groups, roles, contact groups, invites, and plan usage.\n\n## Setup\n\n1. Import this collection and the matching environment (`baton-zoom.postman_environment.json`).\n2. Fill in the environment variables `accountId`, `clientId`, `clientSecret`.\n3. Run the **Auth → Get access token** request first. Its test script writes `accessToken` to the active environment, and every other request in this collection uses it as a Bearer token via collection-level auth.\n4. Tokens are valid for 1 hour. Re-run **Get access token** whenever requests start returning HTTP 401.\n\n## Required Zoom OAuth scopes (granular)\n\n| Folder | Scopes |\n|---|---|\n| Users | `user:read:list_users:admin`, `user:read:user:admin`, `user:write:user:admin`, `user:delete:user:admin` |\n| License tiers | `user:read:user:admin`, `user:update:user:admin` (note: `user:write:user:admin` only covers POST /v2/users; PATCH needs the separate `user:update:user:admin` scope) |\n| Plan usage | `billing:read:plan_usage:admin` |\n| Groups | `group:read:list_groups:admin`, `group:read:list_members:admin`, `group:read:administrator:admin`, `group:write:member:admin`, `group:delete:member:admin`, `group:write:administrator:admin`, `group:delete:administrator:admin` |\n| Roles | `role:read:list_roles:admin`, `role:read:list_members:admin`, `role:write:member:admin`, `role:delete:member:admin` |\n| Contact groups | `contact_group:read:list_groups:admin`, `contact_group:read:list_members:admin` |\n",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Get access token (S2S OAuth)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', () => pm.response.to.have.status(200));",
+									"const body = pm.response.json();",
+									"pm.test('Body contains access_token', () => pm.expect(body).to.have.property('access_token'));",
+									"pm.environment.set('accessToken', body.access_token);",
+									"console.log('Scopes granted:', body.scope);"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{ "key": "username", "value": "{{clientId}}", "type": "string" },
+								{ "key": "password", "value": "{{clientSecret}}", "type": "string" }
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "https://zoom.us/oauth/token?grant_type=account_credentials&account_id={{accountId}}",
+							"protocol": "https",
+							"host": ["zoom", "us"],
+							"path": ["oauth", "token"],
+							"query": [
+								{ "key": "grant_type", "value": "account_credentials" },
+								{ "key": "account_id", "value": "{{accountId}}" }
+							]
+						},
+						"description": "Server-to-Server OAuth token. Uses Basic Auth with `clientId:clientSecret` and account_credentials grant. Writes the returned token to the `accessToken` environment variable.\n\nDocs: https://developers.zoom.us/docs/internal-apps/s2s-oauth/"
+					}
+				}
+			]
+		},
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "List users (active)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users?status=active&page_size=30",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"],
+							"query": [
+								{ "key": "status", "value": "active" },
+								{ "key": "page_size", "value": "30" },
+								{ "key": "next_page_token", "value": "", "disabled": true }
+							]
+						},
+						"description": "Lists active users. Use `next_page_token` for pagination. Scope: `user:read:list_users:admin`."
+					}
+				},
+				{
+					"name": "List users (inactive)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users?status=inactive&page_size=30",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"],
+							"query": [
+								{ "key": "status", "value": "inactive" },
+								{ "key": "page_size", "value": "30" }
+							]
+						},
+						"description": "Lists deactivated users. The connector emits these when `--sync-inactive-users` is set."
+					}
+				},
+				{
+					"name": "Get user (me)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "me"]
+						},
+						"description": "Returns the user that owns the OAuth credentials. Used by `Validate()` to confirm the connector has admin scope.\n\nScope: `user:read:user:admin`."
+					}
+				},
+				{
+					"name": "Get user (by ID)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"]
+						},
+						"description": "Fetches a single user. The connector calls this before Grant/Revoke to verify the user exists and is active.\n\nScope: `user:read:user:admin`."
+					}
+				},
+				{
+					"name": "Create user",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"create\",\n  \"user_info\": {\n    \"type\": 1,\n    \"email\": \"test.user@example.com\",\n    \"first_name\": \"Test\",\n    \"last_name\": \"User\",\n    \"display_name\": \"Test User\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"]
+						},
+						"description": "Creates a new Zoom user. `type` 1=Basic, 2=Licensed, 4=Unassigned without Meetings Basic.\n\nScope: `user:write:user:admin` (note: this is the CREATE scope only — PATCH requires `user:update:user:admin`)."
+					}
+				},
+				{
+					"name": "Delete user",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}?action=delete",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"],
+							"query": [
+								{ "key": "action", "value": "delete", "description": "delete | disassociate" }
+							]
+						},
+						"description": "Removes a user from the account. `action=delete` removes the user entirely; `action=disassociate` keeps the account but unlinks it.\n\nScope: `user:delete:user:admin`."
+					}
+				}
+			]
+		},
+		{
+			"name": "License tiers",
+			"description": "Endpoints exercised by the `license` resource type. Grant maps to PATCH with `type=N`; Revoke maps to PATCH with `type=1` (downgrade to Basic).",
+			"item": [
+				{
+					"name": "Get plan usage (seat counts)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/accounts/me/plans/usage",
+							"host": ["{{baseUrl}}"],
+							"path": ["accounts", "me", "plans", "usage"]
+						},
+						"description": "Returns `plan_base.hosts` (purchased Licensed seats) and `plan_base.usage` (consumed). The connector populates these into the `LicenseProfileTrait` of the Licensed tier resource. Optional — `licenseResourceType.List()` degrades gracefully if this scope is missing.\n\nScope: `billing:read:plan_usage:admin`.\n\nDocs: https://developers.zoom.us/docs/api/billing/ma/ (search 'Get plan usage')."
+					}
+				},
+				{
+					"name": "Grant Licensed tier (PATCH type=2)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": 2\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"]
+						},
+						"description": "Upgrades a user to the Licensed tier. Returns HTTP 204 on success. Consumes a paid seat from `plan_base.hosts`.\n\nScope: `user:update:user:admin` (NOT `user:write:user:admin`)."
+					}
+				},
+				{
+					"name": "Revoke / downgrade to Basic (PATCH type=1)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": 1\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"]
+						},
+						"description": "Downgrades a user back to Basic. This is what the connector's `Revoke(license:2:assigned, user:...)` does — Zoom has no 'remove license' verb, so Revoke is implemented as a tier change.\n\nScope: `user:update:user:admin`."
+					}
+				},
+				{
+					"name": "Set Unassigned tier (PATCH type=4)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": 4\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "{{userId}}"]
+						},
+						"description": "Moves a user to the Unassigned without Meetings Basic tier (aka No Meetings License): keeps the account seat but removes the meetings license.\n\nScope: `user:update:user:admin`."
+					}
+				}
+			]
+		},
+		{
+			"name": "Groups",
+			"item": [
+				{
+					"name": "List groups",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/groups",
+							"host": ["{{baseUrl}}"],
+							"path": ["groups"]
+						},
+						"description": "Scope: `group:read:list_groups:admin`."
+					}
+				},
+				{
+					"name": "List group members",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/groups/{{groupId}}/members?page_size=30",
+							"host": ["{{baseUrl}}"],
+							"path": ["groups", "{{groupId}}", "members"],
+							"query": [
+								{ "key": "page_size", "value": "30" },
+								{ "key": "next_page_token", "value": "", "disabled": true }
+							]
+						},
+						"description": "Scope: `group:read:list_members:admin`."
+					}
+				},
+				{
+					"name": "List group admins",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/groups/{{groupId}}/admins",
+							"host": ["{{baseUrl}}"],
+							"path": ["groups", "{{groupId}}", "admins"]
+						},
+						"description": "Scope: `group:read:administrator:admin`."
+					}
+				},
+				{
+					"name": "Add group members",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"members\": [\n    { \"id\": \"{{userId}}\" }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/groups/{{groupId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["groups", "{{groupId}}", "members"]
+						},
+						"description": "Scope: `group:write:member:admin`."
+					}
+				},
+				{
+					"name": "Remove group member",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/groups/{{groupId}}/members/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["groups", "{{groupId}}", "members", "{{userId}}"]
+						},
+						"description": "Scope: `group:delete:member:admin`."
+					}
+				}
+			]
+		},
+		{
+			"name": "Roles",
+			"item": [
+				{
+					"name": "List roles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": ["{{baseUrl}}"],
+							"path": ["roles"]
+						},
+						"description": "Scope: `role:read:list_roles:admin`."
+					}
+				},
+				{
+					"name": "List role members",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{roleId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["roles", "{{roleId}}", "members"]
+						},
+						"description": "Scope: `role:read:list_members:admin`."
+					}
+				},
+				{
+					"name": "Add member to role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"members\": [\n    { \"id\": \"{{userId}}\" }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{roleId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["roles", "{{roleId}}", "members"]
+						},
+						"description": "Scope: `role:write:member:admin`."
+					}
+				},
+				{
+					"name": "Remove member from role",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{roleId}}/members/{{userId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["roles", "{{roleId}}", "members", "{{userId}}"]
+						},
+						"description": "Scope: `role:delete:member:admin`."
+					}
+				}
+			]
+		},
+		{
+			"name": "Contact groups",
+			"item": [
+				{
+					"name": "List contact groups",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/contacts/groups",
+							"host": ["{{baseUrl}}"],
+							"path": ["contacts", "groups"]
+						},
+						"description": "Scope: `contact_group:read:list_groups:admin`."
+					}
+				},
+				{
+					"name": "List contact group members",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/contacts/groups/{{contactGroupId}}/members",
+							"host": ["{{baseUrl}}"],
+							"path": ["contacts", "groups", "{{contactGroupId}}", "members"]
+						},
+						"description": "Scope: `contact_group:read:list_members:admin`."
+					}
+				}
+			]
+		},
+		{
+			"name": "Invites (pending users)",
+			"item": [
+				{
+					"name": "List pending users",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/users?status=pending&page_size=30",
+							"host": ["{{baseUrl}}"],
+							"path": ["users"],
+							"query": [
+								{ "key": "status", "value": "pending" },
+								{ "key": "page_size", "value": "30" }
+							]
+						},
+						"description": "Users who were invited but haven't accepted yet — surfaced by the `invite` resource type. They have no permanent user ID.\n\nScope: `user:read:list_users:admin`."
+					}
+				}
+			]
+		}
+	]
+}
