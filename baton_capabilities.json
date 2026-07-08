@@ -120,6 +120,9 @@
           },
           {
             "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlementsAndGrants"
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipSyncAnomalyDetection"
           }
         ]
       },
@@ -132,7 +135,8 @@
             "permission": "user:read:list_users:admin"
           }
         ]
-      }
+      },
+      "skipSyncAnomalyDetection": true
     },
     {
       "resourceType": {

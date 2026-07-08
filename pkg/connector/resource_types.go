@@ -90,6 +90,7 @@ var (
 		Annotations: annotations.New(
 			capabilityPermissions(scopeUserReadList),
 			&v2.SkipEntitlementsAndGrants{},
+			&v2.SkipSyncAnomalyDetection{},
 		),
 	}
 
