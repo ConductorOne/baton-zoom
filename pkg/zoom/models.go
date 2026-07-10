@@ -54,6 +54,7 @@ type User struct {
 	DisplayName string `json:"display_name"`
 	RoleID      string `json:"role_id"`
 	Status      string `json:"status"`
+	Manager     string `json:"manager"`
 }
 
 type UserCreationBody struct {
