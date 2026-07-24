@@ -12,6 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -286,9 +287,23 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 	return nil, nil
 }
 
-func userBuilder(client *zoom.Client, syncInactiveUsers bool) *userResourceType {
+// userBuilder returns the user syncer. Users have no entitlements of their
+// own, so the user resource type always skips the entitlements pass. The only
+// grants users emit are license tiers, so when skipLicenseGrants is true (the
+// license resource type is excluded from the sync) the grants pass is skipped
+// too — the license resources those grants target wouldn't exist in the sync.
+func userBuilder(client *zoom.Client, syncInactiveUsers bool, skipLicenseGrants bool) *userResourceType {
+	resourceType := proto.Clone(resourceTypeUser).(*v2.ResourceType)
+	userAnnos := annotations.Annotations(resourceType.GetAnnotations())
+	if skipLicenseGrants {
+		userAnnos.Update(&v2.SkipEntitlementsAndGrants{})
+	} else {
+		userAnnos.Update(&v2.SkipEntitlements{})
+	}
+	resourceType.Annotations = userAnnos
+
 	return &userResourceType{
-		resourceType:      resourceTypeUser,
+		resourceType:      resourceType,
 		client:            client,
 		syncInactiveUsers: syncInactiveUsers,
 	}

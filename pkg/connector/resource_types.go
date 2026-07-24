@@ -13,6 +13,11 @@ import (
 // `user:write:user:admin` only authorizes POST /v2/users (create);
 // PATCH /v2/users/{userId} (used for license tier updates) requires
 // the separate `user:update:user:admin` scope.
+// LicenseResourceTypeID is exported because main.go uses it with
+// cli.ConnectorOpts.WillSyncResourceType to decide whether license grants
+// should be emitted from the user syncer.
+const LicenseResourceTypeID = "license"
+
 const (
 	scopeUserReadList = "user:read:list_users:admin"
 	scopeUserRead     = "user:read:user:admin"
@@ -37,6 +42,9 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
+		// userBuilder clones this and adds SkipEntitlements by default, or
+		// SkipEntitlementsAndGrants when licenses aren't being synced. Any
+		// annotations declared here are preserved on the clone.
 		Annotations: annotations.New(
 			capabilityPermissions(
 				scopeUserRead,
@@ -44,7 +52,6 @@ var (
 				scopeUserWrite,
 				scopeUserDelete,
 			),
-			&v2.SkipEntitlements{},
 		),
 	}
 
@@ -111,7 +118,7 @@ var (
 	}
 
 	resourceTypeLicense = &v2.ResourceType{
-		Id:          "license",
+		Id:          LicenseResourceTypeID,
 		DisplayName: "License",
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_LICENSE_PROFILE,
