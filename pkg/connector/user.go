@@ -17,8 +17,8 @@ import (
 
 const (
 	// userTypeProfileKey carries the user's Zoom license tier (User.type) on
-	// the user resource profile so userBuilder.Grants can emit the
-	// principal-side license grant without an extra GET /v2/users/{id} call.
+	// the resource profile so userBuilder.Grants can emit the principal-side
+	// license grant without an extra GET /v2/users/{id} call.
 	userTypeProfileKey = "type"
 )
 
@@ -42,20 +42,18 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		userTypeProfileKey: int64(user.Type),
 	}
 
-	var userStatus v2.UserTrait_Status_Status
+	var userStatus v2.Status_ResourceStatus
 
 	switch user.Status {
 	case userStatusInactive:
-		userStatus = v2.UserTrait_Status_STATUS_DISABLED
+		userStatus = v2.Status_RESOURCE_STATUS_DISABLED
 	case userStatusActive:
-		userStatus = v2.UserTrait_Status_STATUS_ENABLED
+		userStatus = v2.Status_RESOURCE_STATUS_ENABLED
 	default:
-		userStatus = v2.UserTrait_Status_STATUS_UNSPECIFIED
+		userStatus = v2.Status_RESOURCE_STATUS_UNSPECIFIED
 	}
 
 	userTraitTraitOptions := []resource.UserTraitOption{
-		resource.WithUserProfile(profile),
-		resource.WithStatus(userStatus),
 		resource.WithEmail(user.Email, true),
 	}
 
@@ -65,6 +63,8 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		user.ID,
 		userTraitTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
+		resource.WithResourceProfile(profile),
+		resource.WithResourceStatus(userStatus, ""),
 	)
 	if err != nil {
 		return nil, err
@@ -143,12 +143,7 @@ func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ res
 // yield no grant — the matching License resource was never listed, so
 // emitting one would dangle.
 func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	userTrait, err := resource.GetUserTrait(res)
-	if err != nil {
-		return nil, nil, fmt.Errorf("baton-zoom: failed to read user trait while emitting license grant: %w", err)
-	}
-
-	profile := userTrait.GetProfile().AsMap()
+	profile := resource.GetProfile(res).AsMap()
 	rawType, ok := profile[userTypeProfileKey]
 	if !ok {
 		return nil, &resource.SyncOpResults{}, nil

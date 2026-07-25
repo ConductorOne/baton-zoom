@@ -35,16 +35,13 @@ func roleResource(role zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resource
 		"role_id":   role.ID,
 	}
 
-	roleTraitOptions := []resource.RoleTraitOption{
-		resource.WithRoleProfile(profile),
-	}
-
 	ret, err := resource.NewRoleResource(
 		role.Name,
 		resourceTypeRole,
 		role.ID,
-		roleTraitOptions,
+		nil,
 		resource.WithParentResourceID(parentResourceID),
+		resource.WithResourceProfile(profile),
 	)
 	if err != nil {
 		return nil, err
