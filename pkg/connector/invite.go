@@ -27,8 +27,6 @@ func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resour
 	}
 
 	userTraitOptions := []resource.UserTraitOption{
-		resource.WithUserProfile(profile),
-		resource.WithStatus(v2.UserTrait_Status_STATUS_UNSPECIFIED),
 		resource.WithEmail(user.Email, true),
 	}
 
@@ -38,6 +36,8 @@ func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resour
 		user.Email,
 		userTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
+		resource.WithResourceProfile(profile),
+		resource.WithResourceStatus(v2.Status_RESOURCE_STATUS_UNSPECIFIED, ""),
 	)
 	if err != nil {
 		return nil, err

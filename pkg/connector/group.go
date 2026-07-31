@@ -36,16 +36,13 @@ func groupResource(group zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resou
 		"group_id":   group.ID,
 	}
 
-	groupTraitOptions := []resource.GroupTraitOption{
-		resource.WithGroupProfile(profile),
-	}
-
 	ret, err := resource.NewGroupResource(
 		group.Name,
 		resourceTypeGroup,
 		group.ID,
-		groupTraitOptions,
+		nil,
 		resource.WithParentResourceID(parentResourceID),
+		resource.WithResourceProfile(profile),
 	)
 	if err != nil {
 		return nil, err

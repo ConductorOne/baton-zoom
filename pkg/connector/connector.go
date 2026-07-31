@@ -15,12 +15,21 @@ import (
 type Zoom struct {
 	client            *zoom.Client
 	syncInactiveUsers bool
+	// skipLicenseGrants is true when the customer's sync filter excludes the
+	// license resource type. The zero value (false) preserves the default
+	// behavior, so the capabilities stub in NewForCapabilities advertises the
+	// standard user resource type.
+	skipLicenseGrants bool
 }
 
 func NewForCapabilities() *Zoom {
 	return &Zoom{syncInactiveUsers: true}
 }
 
+// New returns the Zoom connector. syncLicenses reports whether the license
+// resource type will be synced under the current configuration (derived from
+// cli.ConnectorOpts.WillSyncResourceType in main.go); when false, the user
+// syncer skips emitting license grants.
 func New(
 	ctx context.Context,
 	accountId string,
@@ -28,6 +37,7 @@ func New(
 	clientSecret string,
 	syncInactiveUsers bool,
 	baseURL string,
+	syncLicenses bool,
 ) (*Zoom, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
@@ -42,6 +52,7 @@ func New(
 	return &Zoom{
 		client:            zoom.NewClient(httpClient, token, baseURL),
 		syncInactiveUsers: syncInactiveUsers,
+		skipLicenseGrants: !syncLicenses,
 	}, nil
 }
 
@@ -117,7 +128,7 @@ func (z *Zoom) Close() error {
 
 func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	return []connectorbuilder.ResourceSyncerV2{
-		userBuilder(z.client, z.syncInactiveUsers),
+		userBuilder(z.client, z.syncInactiveUsers, z.skipLicenseGrants),
 		inviteBuilder(z.client),
 		groupBuilder(z.client),
 		roleBuilder(z.client),

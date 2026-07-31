@@ -12,6 +12,9 @@ This connector works with Zoom on the Pro, Business, Business Plus, or Enterpris
 
 ## Capabilities
 
+{/* AUTO-GENERATED:START - capabilities
+     Generated from baton_capabilities.json. Do not edit manually. */}
+
 | Resource       | Sync                                                          | Provision                                                     |
 | -------------- | ------------------------------------------------------------- | ------------------------------------------------------------- |
 | Accounts       | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
@@ -20,6 +23,10 @@ This connector works with Zoom on the Pro, Business, Business Plus, or Enterpris
 | Licenses       | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Contact groups | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |                                                               |
 | Invites        | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |                                                               |
+
+{/* AUTO-GENERATED:END - capabilities */}
+
+Licenses are a derived resource type — Zoom exposes no `/licenses` endpoint, so license grants are emitted from the account sync using each user's Zoom license tier. If licenses are excluded from the connector's sync, accounts skip their grants pass entirely, since license grants are the only grants accounts emit.
 
 Invites represent pending Zoom user invitations and are transient — they disappear once the invitee accepts. C1 syncs invites for visibility but skips sync anomaly detection on them, since their counts naturally fluctuate.
 

@@ -27,16 +27,13 @@ func contactGroupResource(group zoom.ContactGroup, parentResourceID *v2.Resource
 		"group_id":   group.ID,
 	}
 
-	groupTraitOptions := []resource.GroupTraitOption{
-		resource.WithGroupProfile(profile),
-	}
-
 	ret, err := resource.NewGroupResource(
 		group.Name,
 		resourceTypeContactGroup,
 		group.ID,
-		groupTraitOptions,
+		nil,
 		resource.WithParentResourceID(parentResourceID),
+		resource.WithResourceProfile(profile),
 	)
 	if err != nil {
 		return nil, err
