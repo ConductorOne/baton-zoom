@@ -34,6 +34,14 @@ The Zoom connector supports [automatic account provisioning](/product/admin/acco
 
 The Zoom connector supports account deprovisioning (user deletion).
 
+### Connector actions
+
+Connector actions are custom capabilities that extend C1 automations with app-specific operations. You can use connector actions in the [Perform connector action](/product/admin/automations-steps-reference#perform-connector-action) automation step.
+
+| Action name | Additional fields | Description |
+|-------------|-------------------|-------------|
+| `transfer_and_delete_user` | `user_id` (resource, required), `action` (string, required: `disassociate` or `delete`), `transfer_email` (string, required if any transfer option is set), `transfer_meeting` (bool), `transfer_webinar` (bool), `transfer_recording` (bool) | Reassigns a user's meetings, webinars, and cloud recordings to another Zoom user, then removes the user from the account |
+
 ## Gather Zoom credentials
 
 Configuring the connector requires you to pass in credentials generated in Zoom. Gather these credentials before you move on.

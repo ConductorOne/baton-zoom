@@ -19,6 +19,17 @@ type Client struct {
 	baseURL    string
 }
 
+// APIError wraps a non-2xx Zoom API response so callers can inspect the
+// status code, e.g. to treat a 404 on delete as "already gone".
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Body)
+}
+
 const (
 	defaultBaseURL   = "https://api.zoom.us/v2"
 	defaultAuthURL   = "https://zoom.us/oauth/token"
@@ -411,12 +422,53 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 }
 
 func (c *Client) DeleteUser(ctx context.Context, userId string) error {
+	return c.DeleteUserWithTransfer(ctx, userId, DeleteUserOptions{})
+}
+
+// DeleteUserOptions configures the query parameters DELETE /v2/users/{userId}
+// accepts for reassigning a user's meetings, webinars, and cloud recordings to
+// another user (TransferEmail) as part of removing them from the account.
+type DeleteUserOptions struct {
+	// Action is Disassociate (unlink the user from the account) or Delete
+	// (permanently remove the user). Empty defers to Zoom's default (delete).
+	Action            DeleteAction
+	TransferEmail     string
+	TransferMeeting   bool
+	TransferWebinar   bool
+	TransferRecording bool
+}
+
+// DeleteUserWithTransfer removes a user via DELETE /v2/users/{userId},
+// optionally transferring their meetings, webinars, and cloud recordings to
+// opts.TransferEmail first. Zoom requires TransferEmail whenever any of the
+// transfer flags is set; the caller is responsible for that validation.
+func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
 	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
 		return err
 	}
 
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
+	var params url.Values
+	if opts.Action != "" || opts.TransferEmail != "" || opts.TransferMeeting || opts.TransferWebinar || opts.TransferRecording {
+		params = url.Values{}
+		if opts.Action != "" {
+			params.Set("action", string(opts.Action))
+		}
+		if opts.TransferEmail != "" {
+			params.Set("transfer_email", opts.TransferEmail)
+		}
+		if opts.TransferMeeting {
+			params.Set("transfer_meeting", "true")
+		}
+		if opts.TransferWebinar {
+			params.Set("transfer_webinar", "true")
+		}
+		if opts.TransferRecording {
+			params.Set("transfer_recording", "true")
+		}
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, params, nil)
 	if err != nil {
 		return err
 	}
@@ -497,7 +549,7 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("request failed with status code %d: %s", resp.StatusCode, string(b))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(b)}
 	}
 
 	if err := json.Unmarshal(b, &res); err != nil {
