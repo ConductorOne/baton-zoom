@@ -113,6 +113,16 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: %v", err)
 	}
 	userID := userRef.GetResource()
+	if userID == "" {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id is required")
+	}
+	// RequireResourceIDArg doesn't enforce AllowedResourceTypeIds itself —
+	// the platform does that before invocation, but --invoke-action (local
+	// and CI testing) bypasses that check, so a wrong-type reference would
+	// otherwise reach the delete call below.
+	if resourceType := userRef.GetResourceType(); resourceType != "" && resourceType != resourceTypeUser.Id {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must reference a %q resource, got %q", resourceTypeUser.Id, resourceType)
+	}
 
 	deleteAction, err := actions.RequireStringArg(args, argDeleteAction)
 	if err != nil {

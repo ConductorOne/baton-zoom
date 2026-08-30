@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,20 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 		{
 			name: "missing action",
 			args: map[string]any{argUserID: userIDArg("abc")},
+		},
+		{
+			name: "empty user_id resource",
+			args: map[string]any{
+				argUserID:       map[string]any{"resource_type": resourceTypeUser.Id, "resource": ""},
+				argDeleteAction: "delete",
+			},
+		},
+		{
+			name: "wrong resource_type for user_id",
+			args: map[string]any{
+				argUserID:       map[string]any{"resource_type": "group", "resource": "abc"},
+				argDeleteAction: "delete",
+			},
 		},
 		{
 			name: "invalid action value",
@@ -209,11 +224,13 @@ func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
 		name        string
 		args        map[string]any
 		wantMessage string
+		wantQuery   url.Values
 	}{
 		{
 			name:        "no transfer flags set",
 			args:        map[string]any{argUserID: userIDArg("abc"), argDeleteAction: "delete"},
 			wantMessage: "user abc deleted from the account",
+			wantQuery:   url.Values{"action": []string{"delete"}},
 		},
 		{
 			name: "transfer_meeting set",
@@ -224,14 +241,27 @@ func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
 				argTransferMeeting: true,
 			},
 			wantMessage: "user abc data transferred and disassociated from the account",
+			// Asserting the actual query sent to the client — not just the
+			// human-readable message — catches a field swapped in the
+			// zoom.DeleteUserOptions{} literal (e.g. TransferWebinar for
+			// TransferMeeting) that the message text alone wouldn't reveal.
+			wantQuery: url.Values{
+				"action":           []string{"disassociate"},
+				"transfer_email":   []string{"manager@example.com"},
+				"transfer_meeting": []string{"true"},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery url.Values
 			srv := mockZoomServer(t,
 				func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
-				func(id string, query map[string][]string) (int, string) { return http.StatusNoContent, "" },
+				func(id string, query map[string][]string) (int, string) {
+					gotQuery = query
+					return http.StatusNoContent, ""
+				},
 			)
 			defer srv.Close()
 
@@ -241,6 +271,7 @@ func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
 			require.NotNil(t, result)
 			assert.True(t, result.Fields["success"].GetBoolValue())
 			assert.Equal(t, tt.wantMessage, result.Fields["message"].GetStringValue())
+			assert.Equal(t, tt.wantQuery, gotQuery)
 		})
 	}
 }

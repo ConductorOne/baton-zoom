@@ -259,10 +259,13 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/users/", userId)
-	var res User
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	if err != nil {
+		return User{}, nil, err
+	}
 
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
+	var res User
+	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
 	if err != nil {
 		return User{}, nil, err
 	}

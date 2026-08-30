@@ -79,6 +79,30 @@ func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
 	assert.Empty(t, gotQuery)
 }
 
+func TestGetUser_EscapesSpecialCharacters(t *testing.T) {
+	const trickyID = "user@example.com?admin=true"
+	var gotPath, gotRawQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotRawQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resolved"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.Client(), "test-token", srv.URL)
+	_, resp, err := client.GetUser(context.Background(), trickyID)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	// A "?" in the id must be escaped into the path, not left to split the
+	// request into a shorter path plus a bogus query string — otherwise a
+	// crafted transfer_email value could make the verification GET resolve
+	// against a different identifier than the literal value implies.
+	assert.Empty(t, gotRawQuery)
+	assert.Equal(t, "/users/"+trickyID, gotPath)
+}
+
 func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
