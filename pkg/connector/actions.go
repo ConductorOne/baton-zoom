@@ -41,7 +41,7 @@ var transferAndDeleteUserSchema = &v2.BatonActionSchema{
 			Field: &config.Field_ResourceIdField{
 				ResourceIdField: &config.ResourceIdField{
 					Rules: &config.ResourceIDRules{
-						AllowedResourceTypeIds: []string{"user"},
+						AllowedResourceTypeIds: []string{resourceTypeUser.Id},
 					},
 				},
 			},
@@ -126,9 +126,27 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	transferMeeting, _ := actions.GetBoolArg(args, argTransferMeeting)
 	transferWebinar, _ := actions.GetBoolArg(args, argTransferWebinar)
 	transferRecording, _ := actions.GetBoolArg(args, argTransferRecording)
+	transferring := transferMeeting || transferWebinar || transferRecording
 
-	if (transferMeeting || transferWebinar || transferRecording) && transferEmail == "" {
+	if transferring && transferEmail == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email is required when transfer_meeting, transfer_webinar, or transfer_recording is set")
+	}
+
+	// Confirm transfer_email resolves to a real Zoom user before the
+	// destructive delete call. Zoom's DELETE /v2/users/{userId} returns the
+	// same 404 whether userID or transfer_email is the one that doesn't
+	// exist, with no structured field to tell them apart — so the only
+	// reliable way to make a later 404 from that call unambiguous is to rule
+	// out transfer_email as the cause beforehand.
+	if transferEmail != "" {
+		_, resp, err := u.client.GetUser(ctx, transferEmail)
+		if err != nil {
+			if isUserNotFound(err) {
+				return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email user not found: %s", transferEmail)
+			}
+			return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: verify transfer_email %s", transferEmail))
+		}
+		resp.Body.Close()
 	}
 
 	err = u.client.DeleteUserWithTransfer(ctx, userID, zoom.DeleteUserOptions{
@@ -145,19 +163,47 @@ func (u *userResourceType) transferAndDeleteUserAction(
 				actions.NewStringReturnField("message", fmt.Sprintf("user %s was already removed from the account", userID)),
 			), nil, nil
 		}
-		return nil, nil, fmt.Errorf("baton-zoom: transfer_and_delete_user: %s: %w", userID, err)
+		return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: %s", userID))
 	}
 
-	return actions.NewReturnValues(
-		true,
-		actions.NewStringReturnField("message", fmt.Sprintf("user %s data transferred and %sd from the account", userID, deleteAction)),
-	), nil, nil
+	message := fmt.Sprintf("user %s %sd from the account", userID, deleteAction)
+	if transferring {
+		message = fmt.Sprintf("user %s data transferred and %sd from the account", userID, deleteAction)
+	}
+	return actions.NewReturnValues(true, actions.NewStringReturnField("message", message)), nil, nil
 }
 
-// isUserNotFound reports whether err is a Zoom 404, meaning the user is
+// isUserNotFound reports whether err is a Zoom 404, meaning the target is
 // already gone — re-invoking transfer_and_delete_user on an already-deleted
 // user must succeed, not fail.
 func isUserNotFound(err error) bool {
 	var apiErr *zoom.APIError
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
+// mapAPIError maps a *zoom.APIError's HTTP status onto the gRPC code the
+// platform uses to decide retry vs. permanent failure. pkg/zoom uses a raw
+// http.Client rather than uhttp, so no error from it otherwise carries a
+// status code. Errors that aren't a *zoom.APIError (or don't match a mapped
+// status) are wrapped as-is, same as elsewhere in this connector.
+func mapAPIError(err error, prefix string) error {
+	var apiErr *zoom.APIError
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	switch apiErr.StatusCode {
+	case http.StatusUnauthorized:
+		return status.Errorf(codes.Unauthenticated, "%s: %v", prefix, err)
+	case http.StatusForbidden:
+		return status.Errorf(codes.PermissionDenied, "%s: %v", prefix, err)
+	case http.StatusNotFound:
+		return status.Errorf(codes.NotFound, "%s: %v", prefix, err)
+	case http.StatusTooManyRequests:
+		return status.Errorf(codes.ResourceExhausted, "%s: %v", prefix, err)
+	default:
+		if apiErr.StatusCode >= http.StatusInternalServerError {
+			return status.Errorf(codes.Internal, "%s: %v", prefix, err)
+		}
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
 }

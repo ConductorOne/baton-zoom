@@ -430,7 +430,8 @@ func (c *Client) DeleteUser(ctx context.Context, userId string) error {
 // another user (TransferEmail) as part of removing them from the account.
 type DeleteUserOptions struct {
 	// Action is Disassociate (unlink the user from the account) or Delete
-	// (permanently remove the user). Empty defers to Zoom's default (delete).
+	// (permanently remove the user). Empty defers to Zoom's default
+	// (disassociate).
 	Action            DeleteAction
 	TransferEmail     string
 	TransferMeeting   bool
