@@ -101,7 +101,8 @@ func TestMapAPIError(t *testing.T) {
 		{name: "404 maps to NotFound", err: &zoom.APIError{StatusCode: http.StatusNotFound}, wantCode: codes.NotFound, wantStatus: true},
 		{name: "429 maps to ResourceExhausted", err: &zoom.APIError{StatusCode: http.StatusTooManyRequests}, wantCode: codes.ResourceExhausted, wantStatus: true},
 		{name: "500 maps to Internal", err: &zoom.APIError{StatusCode: http.StatusInternalServerError}, wantCode: codes.Internal, wantStatus: true},
-		{name: "400 is left unmapped", err: &zoom.APIError{StatusCode: http.StatusBadRequest}, wantStatus: false},
+		{name: "400 maps to InvalidArgument", err: &zoom.APIError{StatusCode: http.StatusBadRequest}, wantCode: codes.InvalidArgument, wantStatus: true},
+		{name: "409 maps to InvalidArgument", err: &zoom.APIError{StatusCode: http.StatusConflict}, wantCode: codes.InvalidArgument, wantStatus: true},
 		{name: "non-APIError is left unmapped", err: assert.AnError, wantStatus: false},
 	}
 
@@ -131,7 +132,12 @@ func mockZoomServer(t *testing.T, getUser func(id string) (status int, body stri
 		case http.MethodDelete:
 			status, body = deleteUser(id, r.URL.Query())
 		default:
-			t.Fatalf("unexpected method %s", r.Method)
+			// t.Fatal/Fatalf must run on the test goroutine — calling it here
+			// would Goexit the handler without writing a response. t.Errorf
+			// is goroutine-safe: it flags the failure without exiting, and
+			// the handler still returns a real response below.
+			t.Errorf("unexpected method %s", r.Method)
+			status, body = http.StatusMethodNotAllowed, ""
 		}
 		w.WriteHeader(status)
 		if body != "" {
@@ -151,8 +157,11 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	srv := mockZoomServer(t,
 		func(id string) (int, string) { return http.StatusNotFound, `{"code":1001,"message":"User not exist"}` },
 		func(id string, query map[string][]string) (int, string) {
-			t.Fatal("DELETE should not be called when transfer_email verification fails")
-			return 0, ""
+			// t.Error, not t.Fatal: this runs on the httptest handler
+			// goroutine, and Fatal's Goexit would leave the request without
+			// a response instead of failing the test cleanly.
+			t.Error("DELETE should not be called when transfer_email verification fails")
+			return http.StatusInternalServerError, ""
 		},
 	)
 	defer srv.Close()

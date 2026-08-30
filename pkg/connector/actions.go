@@ -201,9 +201,17 @@ func mapAPIError(err error, prefix string) error {
 	case http.StatusTooManyRequests:
 		return status.Errorf(codes.ResourceExhausted, "%s: %v", prefix, err)
 	default:
-		if apiErr.StatusCode >= http.StatusInternalServerError {
+		switch {
+		case apiErr.StatusCode >= http.StatusInternalServerError:
 			return status.Errorf(codes.Internal, "%s: %v", prefix, err)
+		case apiErr.StatusCode >= http.StatusBadRequest:
+			// Any other 4xx (e.g. Zoom's 400 for transfer_email matching the
+			// deleted user's email) is a caller error that won't succeed on
+			// retry — report InvalidArgument rather than letting it surface
+			// as codes.Unknown, which the platform may retry.
+			return status.Errorf(codes.InvalidArgument, "%s: %v", prefix, err)
+		default:
+			return fmt.Errorf("%s: %w", prefix, err)
 		}
-		return fmt.Errorf("%s: %w", prefix, err)
 	}
 }
