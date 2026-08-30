@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	config "github.com/conductorone/baton-sdk/pb/c1/config/v1"
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -123,6 +124,12 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	if resourceType := userRef.GetResourceType(); resourceType != "" && resourceType != resourceTypeUser.Id {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must reference a %q resource, got %q", resourceTypeUser.Id, resourceType)
 	}
+	// A "/" is never valid in a Zoom user ID; reject it here rather than
+	// relying solely on the client's URL escaping to keep it confined to
+	// one path segment.
+	if strings.Contains(userID, "/") {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must not contain \"/\"")
+	}
 
 	deleteAction, err := actions.RequireStringArg(args, argDeleteAction)
 	if err != nil {
@@ -140,6 +147,9 @@ func (u *userResourceType) transferAndDeleteUserAction(
 
 	if transferring && transferEmail == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email is required when transfer_meeting, transfer_webinar, or transfer_recording is set")
+	}
+	if strings.Contains(transferEmail, "/") {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email must not contain \"/\"")
 	}
 
 	// Confirm transfer_email resolves to a real Zoom user before the

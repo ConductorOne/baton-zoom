@@ -57,6 +57,21 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "user_id containing a slash",
+			args: map[string]any{
+				argUserID:       userIDArg("../accounts/me"),
+				argDeleteAction: "delete",
+			},
+		},
+		{
+			name: "transfer_email containing a slash",
+			args: map[string]any{
+				argUserID:        userIDArg("abc"),
+				argDeleteAction:  "delete",
+				argTransferEmail: "../accounts/me",
+			},
+		},
+		{
 			name: "invalid action value",
 			args: map[string]any{argUserID: userIDArg("abc"), argDeleteAction: "wipe"},
 		},

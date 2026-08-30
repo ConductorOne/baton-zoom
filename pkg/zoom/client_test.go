@@ -65,6 +65,25 @@ func TestDeleteUserWithTransfer_QueryParams(t *testing.T) {
 	}
 }
 
+func TestDeleteUserWithTransfer_EscapesDotSegments(t *testing.T) {
+	const trickyID = "../accounts/me"
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.Client(), "test-token", srv.URL)
+	err := client.DeleteUserWithTransfer(context.Background(), trickyID, DeleteUserOptions{Action: Delete})
+	require.NoError(t, err)
+
+	// Same hazard as GetUser: url.JoinPath would resolve "../" and send this
+	// delete to a different Zoom endpoint (e.g. the sub-account disassociate
+	// route) than /users/{userId}.
+	assert.Equal(t, "/users/"+trickyID, gotPath)
+}
+
 func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
 	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,27 +99,45 @@ func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
 }
 
 func TestGetUser_EscapesSpecialCharacters(t *testing.T) {
-	const trickyID = "user@example.com?admin=true"
-	var gotPath, gotRawQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotRawQuery = r.URL.RawQuery
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"id":"resolved"}`))
-	}))
-	defer srv.Close()
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{
+			name: "question mark is escaped, not treated as a query separator",
+			id:   "user@example.com?admin=true",
+		},
+		{
+			name: "dot-segments are escaped, not resolved to a different endpoint",
+			id:   "../accounts/me",
+		},
+	}
 
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	_, resp, err := client.GetUser(context.Background(), trickyID)
-	require.NoError(t, err)
-	_ = resp.Body.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath, gotRawQuery string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotRawQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"id":"resolved"}`))
+			}))
+			defer srv.Close()
 
-	// A "?" in the id must be escaped into the path, not left to split the
-	// request into a shorter path plus a bogus query string — otherwise a
-	// crafted transfer_email value could make the verification GET resolve
-	// against a different identifier than the literal value implies.
-	assert.Empty(t, gotRawQuery)
-	assert.Equal(t, "/users/"+trickyID, gotPath)
+			client := NewClient(srv.Client(), "test-token", srv.URL)
+			_, resp, err := client.GetUser(context.Background(), tt.id)
+			require.NoError(t, err)
+			_ = resp.Body.Close()
+
+			// The id must land in the path verbatim as a single segment, with
+			// no query string — url.JoinPath would resolve "../" segments
+			// (redirecting the request to a different Zoom endpoint) and
+			// leave "?" to split off a bogus query string; PathEscape avoids
+			// both.
+			assert.Empty(t, gotRawQuery)
+			assert.Equal(t, "/users/"+tt.id, gotPath)
+		})
+	}
 }
 
 func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
