@@ -67,9 +67,10 @@ func TestDeleteUserWithTransfer_QueryParams(t *testing.T) {
 
 func TestDeleteUserWithTransfer_EscapesDotSegments(t *testing.T) {
 	const trickyID = "../accounts/me"
-	var gotPath string
+	var gotPath, gotEscapedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotEscapedPath = r.URL.EscapedPath()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -80,8 +81,11 @@ func TestDeleteUserWithTransfer_EscapesDotSegments(t *testing.T) {
 
 	// Same hazard as GetUser: url.JoinPath would resolve "../" and send this
 	// delete to a different Zoom endpoint (e.g. the sub-account disassociate
-	// route) than /users/{userId}.
+	// route) than /users/{userId}. r.URL.Path is decoded and reads the same
+	// either way; r.URL.EscapedPath() is what's actually on the wire, which
+	// is the property the fix relies on.
 	assert.Equal(t, "/users/"+trickyID, gotPath)
+	assert.Equal(t, "/users/..%2Faccounts%2Fme", gotEscapedPath)
 }
 
 func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
@@ -100,25 +104,29 @@ func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
 
 func TestGetUser_EscapesSpecialCharacters(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
+		name            string
+		id              string
+		wantEscapedPath string
 	}{
 		{
-			name: "question mark is escaped, not treated as a query separator",
-			id:   "user@example.com?admin=true",
+			name:            "question mark is escaped, not treated as a query separator",
+			id:              "user@example.com?admin=true",
+			wantEscapedPath: "/users/user@example.com%3Fadmin=true",
 		},
 		{
-			name: "dot-segments are escaped, not resolved to a different endpoint",
-			id:   "../accounts/me",
+			name:            "dot-segments are escaped, not resolved to a different endpoint",
+			id:              "../accounts/me",
+			wantEscapedPath: "/users/..%2Faccounts%2Fme",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotPath, gotRawQuery string
+			var gotPath, gotRawQuery, gotEscapedPath string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotPath = r.URL.Path
 				gotRawQuery = r.URL.RawQuery
+				gotEscapedPath = r.URL.EscapedPath()
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"id":"resolved"}`))
 			}))
@@ -129,13 +137,15 @@ func TestGetUser_EscapesSpecialCharacters(t *testing.T) {
 			require.NoError(t, err)
 			_ = resp.Body.Close()
 
-			// The id must land in the path verbatim as a single segment, with
-			// no query string — url.JoinPath would resolve "../" segments
-			// (redirecting the request to a different Zoom endpoint) and
-			// leave "?" to split off a bogus query string; PathEscape avoids
-			// both.
+			// r.URL.Path is decoded, so it reads identically whether the
+			// dot-segment was sent escaped or raw — it can't tell a correct
+			// implementation from a broken one. r.URL.EscapedPath() is what
+			// actually went out on the wire, which is the property PathEscape
+			// is relied on for: an intermediary must see "..%2F", not a real
+			// path separator it could normalize away.
 			assert.Empty(t, gotRawQuery)
 			assert.Equal(t, "/users/"+tt.id, gotPath)
+			assert.Equal(t, tt.wantEscapedPath, gotEscapedPath)
 		})
 	}
 }
