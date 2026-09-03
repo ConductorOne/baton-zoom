@@ -274,7 +274,18 @@ func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, err
 func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId) (annotations.Annotations, error) {
 	userID := principal.Resource
 
-	err := u.client.DeleteUser(ctx, userID)
+	var transferEmail string
+	user, resp, err := u.client.GetUser(ctx, userID)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, fmt.Errorf("baton-zoom: failed to get user %s for deletion: %w", userID, err)
+	}
+	resp.Body.Close()
+	transferEmail = user.Manager
+
+	err = u.client.DeleteUser(ctx, userID, transferEmail)
 	if err != nil {
 		return nil, fmt.Errorf("baton-zoom: failed to delete user %s: %w", userID, err)
 	}

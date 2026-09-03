@@ -410,13 +410,22 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 	return &res, nil
 }
 
-func (c *Client) DeleteUser(ctx context.Context, userId string) error {
+func (c *Client) DeleteUser(ctx context.Context, userId string, transferEmail string) error {
 	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
 		return err
 	}
 
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
+	params := url.Values{}
+	params.Set("action", "delete")
+	if transferEmail != "" {
+		params.Set("transfer_email", transferEmail)
+		params.Set("transfer_recording", "true")
+		params.Set("transfer_meeting", "true")
+		params.Set("transfer_whiteboard", "true")
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, params, nil)
 	if err != nil {
 		return err
 	}
