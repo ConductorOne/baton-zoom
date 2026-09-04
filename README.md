@@ -62,7 +62,7 @@ baton resources
 ## docker
 
 ```
-docker run --rm -v $(pwd):/out -e BATON_ZOOM_CLIENT_ID=clientId BATON_ZOOM_CLIENT_SECRET=clientSecret BATON_ACCOUNT_ID=accountId ghcr.io/conductorone/baton-zoom:latest -f "/out/sync.c1z"
+docker run --rm -v $(pwd):/out -e BATON_ZOOM_CLIENT_ID=clientId BATON_ZOOM_CLIENT_SECRET=clientSecret BATON_ACCOUNT_ID=accountId public.ecr.aws/conductorone/baton-zoom:latest -f "/out/sync.c1z"
 docker run --rm -v $(pwd):/out ghcr.io/conductorone/baton:latest -f "/out/sync.c1z" resources
 ```
 
