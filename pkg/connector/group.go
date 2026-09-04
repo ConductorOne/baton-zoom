@@ -214,7 +214,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	l := ctxzap.Extract(ctx)
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
+		l.Debug(
 			"baton-zoom: only users can be granted group membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
@@ -222,12 +222,16 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted group membership")
 	}
 
+	result := []*v2.Grant{
+		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+	}
+
 	if entitlement.Slug == memberEntitlement {
 		err := g.client.AddGroupMembers(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
 			return nil, nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
 		}
-		return nil, nil, nil
+		return result, nil, nil
 	} else {
 		err := g.client.AddGroupAdmins(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
@@ -235,7 +239,7 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 		}
 	}
 
-	return nil, nil, nil
+	return result, nil, nil
 }
 
 func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
@@ -245,8 +249,8 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	principal := grant.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-zoom: only users can have role membership revoked",
+		l.Debug(
+			"baton-zoom: only users can have group membership revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
@@ -256,11 +260,17 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	if entitlement.Slug == memberEntitlement {
 		err := g.client.DeleteGroupMember(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
+			if zoom.IsGroupMemberNotFound(err) {
+				return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+			}
 			return nil, fmt.Errorf("baton-zoom: failed to remove group member: %w", err)
 		}
 	} else {
 		err := g.client.DeleteGroupAdmin(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
+			if zoom.IsGroupAdminNotFound(err) {
+				return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+			}
 			return nil, fmt.Errorf("baton-zoom: failed to remove group admin: %w", err)
 		}
 	}

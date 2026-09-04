@@ -276,6 +276,9 @@ func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId)
 
 	err := u.client.DeleteUser(ctx, userID)
 	if err != nil {
+		if zoom.IsUserNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("baton-zoom: failed to delete user %s: %w", userID, err)
 	}
 

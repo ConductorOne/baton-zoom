@@ -18,6 +18,16 @@ const (
 	UnassignedUser UserType = 4 // "Unassigned without Meetings Basic" (aka No Meetings License)
 )
 
+// DeleteAction selects the outcome of DELETE /v2/users/{userId}: unlink the
+// user from the account (Disassociate) while keeping the Zoom user record, or
+// remove the user entirely (Delete).
+type DeleteAction string
+
+const (
+	Disassociate DeleteAction = "disassociate"
+	Delete       DeleteAction = "delete"
+)
+
 type Group struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
