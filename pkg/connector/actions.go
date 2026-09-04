@@ -12,6 +12,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/actions"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -178,10 +179,20 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	})
 	if err != nil {
 		if isUserNotFound(err) {
-			return actions.NewReturnValues(
-				true,
-				actions.NewStringReturnField("message", fmt.Sprintf("user %s was already removed from the account", userID)),
-			), nil, nil
+			if !transferring {
+				return actions.NewReturnValues(
+					true,
+					actions.NewStringReturnField("message", fmt.Sprintf("user %s was already removed from the account", userID)),
+				), nil, nil
+			}
+			// The recipient preflight above only proves transfer_email existed
+			// before this call — it's no proof the transfer itself completed.
+			// A 404 here could mean the delete-with-transfer already ran
+			// (safe to treat as done) or that it never ran with a transfer at
+			// all (e.g. a prior no-transfer delete already removed the user).
+			// Zoom gives no signal to tell those apart, so don't claim success.
+			return nil, nil, status.Errorf(codes.FailedPrecondition,
+				"baton-zoom: transfer_and_delete_user: user %s was already removed from the account, but the requested transfer to %s cannot be confirmed; verify manually", userID, transferEmail)
 		}
 		return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: %s", userID))
 	}
@@ -204,34 +215,17 @@ func isUserNotFound(err error) bool {
 // mapAPIError maps a *zoom.APIError's HTTP status onto the gRPC code the
 // platform uses to decide retry vs. permanent failure. pkg/zoom uses a raw
 // http.Client rather than uhttp, so no error from it otherwise carries a
-// status code. Errors that aren't a *zoom.APIError (or don't match a mapped
-// status) are wrapped as-is, same as elsewhere in this connector.
+// status code. Delegates to uhttp.GrpcCodeFromHTTPStatus — the same mapping
+// the SDK's own retry classifier keys off of (only codes.Unavailable and
+// codes.DeadlineExceeded are retried) — rather than hand-rolling a parallel
+// mapping that can drift from it. uhttp.WrapErrors joins the resulting
+// status with the original error so errors.As(*zoom.APIError) still works.
+// Errors that aren't a *zoom.APIError are wrapped as-is.
 func mapAPIError(err error, prefix string) error {
 	var apiErr *zoom.APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
-	switch apiErr.StatusCode {
-	case http.StatusUnauthorized:
-		return status.Errorf(codes.Unauthenticated, "%s: %v", prefix, err)
-	case http.StatusForbidden:
-		return status.Errorf(codes.PermissionDenied, "%s: %v", prefix, err)
-	case http.StatusNotFound:
-		return status.Errorf(codes.NotFound, "%s: %v", prefix, err)
-	case http.StatusTooManyRequests:
-		return status.Errorf(codes.ResourceExhausted, "%s: %v", prefix, err)
-	default:
-		switch {
-		case apiErr.StatusCode >= http.StatusInternalServerError:
-			return status.Errorf(codes.Internal, "%s: %v", prefix, err)
-		case apiErr.StatusCode >= http.StatusBadRequest:
-			// Any other 4xx (e.g. Zoom's 400 for transfer_email matching the
-			// deleted user's email) is a caller error that won't succeed on
-			// retry — report InvalidArgument rather than letting it surface
-			// as codes.Unknown, which the platform may retry.
-			return status.Errorf(codes.InvalidArgument, "%s: %v", prefix, err)
-		default:
-			return fmt.Errorf("%s: %w", prefix, err)
-		}
-	}
+	code := uhttp.GrpcCodeFromHTTPStatus(apiErr.StatusCode)
+	return uhttp.WrapErrors(code, fmt.Sprintf("%s: %v", prefix, err), err)
 }

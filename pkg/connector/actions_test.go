@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,6 +121,12 @@ func TestIsUserNotFound(t *testing.T) {
 }
 
 func TestMapAPIError(t *testing.T) {
+	// These expectations follow uhttp.GrpcCodeFromHTTPStatus (baton-sdk
+	// v0.25.0) rather than a hand-rolled mapping: 429 and 5xx map to
+	// Unavailable specifically because the SDK's retry classifier
+	// (pkg/retry) only retries codes.Unavailable and codes.DeadlineExceeded —
+	// anything else (e.g. ResourceExhausted, Internal) is treated as a
+	// permanent failure even for a transient rate limit or server error.
 	tests := []struct {
 		name       string
 		err        error
@@ -129,10 +136,11 @@ func TestMapAPIError(t *testing.T) {
 		{name: "401 maps to Unauthenticated", err: &zoom.APIError{StatusCode: http.StatusUnauthorized}, wantCode: codes.Unauthenticated, wantStatus: true},
 		{name: "403 maps to PermissionDenied", err: &zoom.APIError{StatusCode: http.StatusForbidden}, wantCode: codes.PermissionDenied, wantStatus: true},
 		{name: "404 maps to NotFound", err: &zoom.APIError{StatusCode: http.StatusNotFound}, wantCode: codes.NotFound, wantStatus: true},
-		{name: "429 maps to ResourceExhausted", err: &zoom.APIError{StatusCode: http.StatusTooManyRequests}, wantCode: codes.ResourceExhausted, wantStatus: true},
-		{name: "500 maps to Internal", err: &zoom.APIError{StatusCode: http.StatusInternalServerError}, wantCode: codes.Internal, wantStatus: true},
+		{name: "429 maps to Unavailable (retryable)", err: &zoom.APIError{StatusCode: http.StatusTooManyRequests}, wantCode: codes.Unavailable, wantStatus: true},
+		{name: "500 maps to Unavailable (retryable)", err: &zoom.APIError{StatusCode: http.StatusInternalServerError}, wantCode: codes.Unavailable, wantStatus: true},
+		{name: "503 maps to Unavailable (retryable)", err: &zoom.APIError{StatusCode: http.StatusServiceUnavailable}, wantCode: codes.Unavailable, wantStatus: true},
 		{name: "400 maps to InvalidArgument", err: &zoom.APIError{StatusCode: http.StatusBadRequest}, wantCode: codes.InvalidArgument, wantStatus: true},
-		{name: "409 maps to InvalidArgument", err: &zoom.APIError{StatusCode: http.StatusConflict}, wantCode: codes.InvalidArgument, wantStatus: true},
+		{name: "409 maps to AlreadyExists", err: &zoom.APIError{StatusCode: http.StatusConflict}, wantCode: codes.AlreadyExists, wantStatus: true},
 		{name: "non-APIError is left unmapped", err: assert.AnError, wantStatus: false},
 	}
 
@@ -141,6 +149,9 @@ func TestMapAPIError(t *testing.T) {
 			mapped := mapAPIError(tt.err, "baton-zoom: test")
 			if tt.wantStatus {
 				assert.Equal(t, tt.wantCode, status.Code(mapped))
+
+				var apiErr *zoom.APIError
+				assert.True(t, errors.As(mapped, &apiErr), "errors.As should still find the wrapped *zoom.APIError")
 			} else {
 				assert.Equal(t, codes.Unknown, status.Code(mapped))
 			}
@@ -211,6 +222,10 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "ghost@example.com")
 }
 
+// TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess deliberately sets
+// no transfer flags: the delete-404-is-success shortcut is only safe here
+// because nothing was promised to be transferred. See the sibling
+// _TransferRequestedAndAlreadyDeletedIsError test for the opposite case.
 func TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess(t *testing.T) {
 	srv := mockZoomServer(t,
 		func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
@@ -232,6 +247,36 @@ func TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Fields["success"].GetBoolValue())
 	assert.Contains(t, result.Fields["message"].GetStringValue(), "already removed")
+}
+
+// TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError
+// covers the case the previous test can't: when a transfer WAS requested,
+// the recipient preflight only proves transfer_email existed before the
+// delete call — it's not proof the transfer itself completed. A 404 on
+// delete here must not be reported as success, since that would silently
+// overclaim "data transferred" when Zoom gives no way to confirm it was.
+func TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError(t *testing.T) {
+	srv := mockZoomServer(t,
+		func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
+		func(id string, query map[string][]string) (int, string) {
+			return http.StatusNotFound, `{"code":1001,"message":"User not exist"}`
+		},
+	)
+	defer srv.Close()
+
+	u := newTestUserResourceType(srv.URL)
+	args := newActionArgs(t, map[string]any{
+		argUserID:          userIDArg("abc"),
+		argDeleteAction:    "delete",
+		argTransferEmail:   "manager@example.com",
+		argTransferMeeting: true,
+	})
+
+	result, _, err := u.transferAndDeleteUserAction(context.Background(), args)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Contains(t, err.Error(), "manager@example.com")
 }
 
 func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
