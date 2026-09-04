@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -40,6 +41,10 @@ func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	// Trim trailing slashes so every "c.baseURL + "/resource/" + id" call
+	// site (and url.PathEscape-based ones) gets a single "/" between them,
+	// regardless of how the operator-settable --base-url flag was entered.
+	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{
 		httpClient: httpClient,
 		token:      token,

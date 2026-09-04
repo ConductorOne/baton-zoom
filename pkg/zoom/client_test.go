@@ -11,6 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewClient_TrimsTrailingSlashFromBaseURL(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resolved"}`))
+	}))
+	defer srv.Close()
+
+	// A trailing slash on --base-url is a plausible operator mistake (or a
+	// deliberate mock-server URL). Without normalization this used to yield
+	// a double slash (".../v2//users/abc123") since raw concatenation,
+	// unlike the url.JoinPath this client used to use, doesn't collapse it.
+	client := NewClient(srv.Client(), "test-token", srv.URL+"/")
+	_, resp, err := client.GetUser(context.Background(), "abc123")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+
+	assert.Equal(t, "/users/abc123", gotPath)
+}
+
 func TestDeleteUserWithTransfer_QueryParams(t *testing.T) {
 	tests := []struct {
 		name      string
