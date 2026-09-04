@@ -24,7 +24,7 @@ jobs:
       - name: Run baton-zoom
         run: ./baton-zoom --log-level=debug
       - name: Install baton
-        uses: ConductorOne/github-workflows/actions/get-baton@v2
+        uses: ConductorOne/github-workflows/actions/get-baton@v4
       - name: Revoke grant
         run: ./baton-zoom --revoke-grant "${{ env.CONNECTOR_GRANT }}"
       - name: Check grant was revoked
