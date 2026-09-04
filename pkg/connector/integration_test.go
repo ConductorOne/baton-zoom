@@ -49,7 +49,10 @@ func getClientForTesting(ctx context.Context) (*Zoom, error) {
 		return nil, fmt.Errorf("zoom-connector: failed to get token: %w", err)
 	}
 
-	return &Zoom{
-		client: zoom.NewClient(httpClient, token, ""),
-	}, nil
+	zoomClient, err := zoom.NewClient(ctx, httpClient, token, "")
+	if err != nil {
+		return nil, fmt.Errorf("zoom-connector: failed to create client: %w", err)
+	}
+
+	return &Zoom{client: zoomClient}, nil
 }

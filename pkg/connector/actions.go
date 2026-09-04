@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	config "github.com/conductorone/baton-sdk/pb/c1/config/v1"
@@ -16,6 +15,7 @@ import (
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -100,7 +100,8 @@ var transferAndDeleteUserSchema = &v2.BatonActionSchema{
 var _ connectorbuilder.ResourceActionProvider = (*userResourceType)(nil)
 
 func (u *userResourceType) ResourceActions(ctx context.Context, registry actions.ActionRegistry) error {
-	if err := registry.Register(ctx, transferAndDeleteUserSchema, u.transferAndDeleteUserAction); err != nil {
+	schema := proto.Clone(transferAndDeleteUserSchema).(*v2.BatonActionSchema)
+	if err := registry.Register(ctx, schema, u.transferAndDeleteUserAction); err != nil {
 		return fmt.Errorf("baton-zoom: register transfer_and_delete_user action: %w", err)
 	}
 	return nil
@@ -122,14 +123,13 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	// the platform does that before invocation, but --invoke-action (local
 	// and CI testing) bypasses that check, so a wrong-type reference would
 	// otherwise reach the delete call below.
-	if resourceType := userRef.GetResourceType(); resourceType != "" && resourceType != resourceTypeUser.Id {
+	if resourceType := userRef.GetResourceType(); resourceType != resourceTypeUser.Id {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must reference a %q resource, got %q", resourceTypeUser.Id, resourceType)
 	}
-	// A "/" is never valid in a Zoom user ID; reject it here rather than
-	// relying solely on the client's URL escaping to keep it confined to
-	// one path segment.
-	if strings.Contains(userID, "/") {
-		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must not contain \"/\"")
+	// Path separators and standalone dot segments are never valid Zoom user
+	// IDs. Reject them before url.JoinPath can normalize the target endpoint.
+	if invalidUserPathSegment(userID) {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must not contain path separators or standalone dot segments")
 	}
 
 	deleteAction, err := actions.RequireStringArg(args, argDeleteAction)
@@ -140,17 +140,32 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: action must be %q or %q", zoom.Disassociate, zoom.Delete)
 	}
 
-	transferEmail, _ := actions.GetStringArg(args, argTransferEmail)
-	transferMeeting, _ := actions.GetBoolArg(args, argTransferMeeting)
-	transferWebinar, _ := actions.GetBoolArg(args, argTransferWebinar)
-	transferRecording, _ := actions.GetBoolArg(args, argTransferRecording)
+	transferEmail, err := optionalStringArg(args, argTransferEmail)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: %v", err)
+	}
+	transferMeeting, err := optionalBoolArg(args, argTransferMeeting)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: %v", err)
+	}
+	transferWebinar, err := optionalBoolArg(args, argTransferWebinar)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: %v", err)
+	}
+	transferRecording, err := optionalBoolArg(args, argTransferRecording)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: %v", err)
+	}
 	transferring := transferMeeting || transferWebinar || transferRecording
 
 	if transferring && transferEmail == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email is required when transfer_meeting, transfer_webinar, or transfer_recording is set")
 	}
-	if strings.Contains(transferEmail, "/") {
-		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email must not contain \"/\"")
+	if transferEmail != "" && !transferring {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: at least one transfer option is required when transfer_email is set")
+	}
+	if invalidUserPathSegment(transferEmail) {
+		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email must not contain path separators or standalone dot segments")
 	}
 
 	// Confirm transfer_email resolves to a real Zoom user before the
@@ -162,7 +177,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	if transferEmail != "" {
 		_, resp, err := u.client.GetUser(ctx, transferEmail)
 		if err != nil {
-			if isUserNotFound(err) {
+			if zoom.IsUserNotFound(err) {
 				return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email user not found: %s", transferEmail)
 			}
 			return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: verify transfer_email %s", transferEmail))
@@ -178,7 +193,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		TransferRecording: transferRecording,
 	})
 	if err != nil {
-		if isUserNotFound(err) {
+		if zoom.IsUserNotFound(err) {
 			if !transferring {
 				return actions.NewReturnValues(
 					true,
@@ -204,24 +219,46 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	return actions.NewReturnValues(true, actions.NewStringReturnField("message", message)), nil, nil
 }
 
-// isUserNotFound reports whether err is a Zoom 404, meaning the target is
-// already gone — re-invoking transfer_and_delete_user on an already-deleted
-// user must succeed, not fail.
-func isUserNotFound(err error) bool {
-	var apiErr *zoom.APIError
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+func optionalStringArg(args *structpb.Struct, key string) (string, error) {
+	value, ok := args.GetFields()[key]
+	if !ok || value == nil {
+		return "", nil
+	}
+	if _, ok := value.GetKind().(*structpb.Value_NullValue); ok {
+		return "", nil
+	}
+	if stringValue, ok := actions.GetStringArg(args, key); ok {
+		return stringValue, nil
+	}
+	return "", fmt.Errorf("%s must be a string", key)
 }
 
-// mapAPIError maps a *zoom.APIError's HTTP status onto the gRPC code the
-// platform uses to decide retry vs. permanent failure. pkg/zoom uses a raw
-// http.Client rather than uhttp, so no error from it otherwise carries a
-// status code. Delegates to uhttp.GrpcCodeFromHTTPStatus — the same mapping
-// the SDK's own retry classifier keys off of (only codes.Unavailable and
-// codes.DeadlineExceeded are retried) — rather than hand-rolling a parallel
-// mapping that can drift from it. uhttp.WrapErrors joins the resulting
-// status with the original error so errors.As(*zoom.APIError) still works.
-// Errors that aren't a *zoom.APIError are wrapped as-is.
+func invalidUserPathSegment(value string) bool {
+	return value == "." || value == ".." || strings.Contains(value, "/")
+}
+
+func optionalBoolArg(args *structpb.Struct, key string) (bool, error) {
+	value, ok := args.GetFields()[key]
+	if !ok || value == nil {
+		return false, nil
+	}
+	if _, ok := value.GetKind().(*structpb.Value_NullValue); ok {
+		return false, nil
+	}
+	if boolValue, ok := actions.GetBoolArg(args, key); ok {
+		return boolValue, nil
+	}
+	return false, fmt.Errorf("%s must be a boolean", key)
+}
+
+// mapAPIError attaches a handler-owned prefix while preserving the gRPC code
+// BaseHttpClient already mapped from the HTTP status. It reuses
+// uhttp.GrpcCodeFromHTTPStatus so a 429/5xx stays Unavailable for the SDK
+// retryer, and WrapErrors keeps *zoom.APIError in the chain for errors.As.
 func mapAPIError(err error, prefix string) error {
+	if code := status.Code(err); code != codes.OK && code != codes.Unknown {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
 	var apiErr *zoom.APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("%s: %w", prefix, err)

@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/conductorone/baton-sdk/pkg/actions"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/conductorone/baton-zoom/pkg/zoom"
@@ -26,6 +28,24 @@ func newActionArgs(t *testing.T, fields map[string]any) *structpb.Struct {
 
 func userIDArg(id string) map[string]any {
 	return map[string]any{"resource_type": resourceTypeUser.Id, "resource": id}
+}
+
+func TestResourceActionsClonesSharedSchema(t *testing.T) {
+	ctx := context.Background()
+	manager := actions.NewActionManager(ctx)
+	registry, err := manager.GetTypeRegistry(ctx, resourceTypeUser.Id)
+	require.NoError(t, err)
+
+	original := proto.Clone(transferAndDeleteUserSchema)
+	u := &userResourceType{}
+	require.NoError(t, u.ResourceActions(ctx, registry))
+
+	assert.True(t, proto.Equal(original, transferAndDeleteUserSchema))
+	schemas, _, err := manager.ListActionSchemas(ctx, resourceTypeUser.Id)
+	require.NoError(t, err)
+	require.Len(t, schemas, 1)
+	assert.NotSame(t, transferAndDeleteUserSchema, schemas[0])
+	assert.Equal(t, resourceTypeUser.Id, schemas[0].GetResourceTypeId())
 }
 
 func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
@@ -58,6 +78,13 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "missing resource_type for user_id",
+			args: map[string]any{
+				argUserID:       map[string]any{"resource": "abc"},
+				argDeleteAction: "delete",
+			},
+		},
+		{
 			name: "user_id containing a slash",
 			args: map[string]any{
 				argUserID:       userIDArg("../accounts/me"),
@@ -65,11 +92,72 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "user_id is a dot segment",
+			args: map[string]any{
+				argUserID:       userIDArg(".."),
+				argDeleteAction: "delete",
+			},
+		},
+		{
 			name: "transfer_email containing a slash",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   "../accounts/me",
+				argTransferMeeting: true,
+			},
+		},
+		{
+			name: "transfer_email is a dot segment",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   ".",
+				argTransferMeeting: true,
+			},
+		},
+		{
+			name: "transfer_email without a transfer option",
 			args: map[string]any{
 				argUserID:        userIDArg("abc"),
 				argDeleteAction:  "delete",
-				argTransferEmail: "../accounts/me",
+				argTransferEmail: "manager@example.com",
+			},
+		},
+		{
+			name: "wrong type for transfer_email",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   true,
+				argTransferMeeting: true,
+			},
+		},
+		{
+			name: "wrong type for transfer_meeting",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   "manager@example.com",
+				argTransferMeeting: "true",
+			},
+		},
+		{
+			name: "wrong type for transfer_webinar",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   "manager@example.com",
+				argTransferWebinar: "true",
+			},
+		},
+		{
+			name: "wrong type for transfer_recording",
+			args: map[string]any{
+				argUserID:            userIDArg("abc"),
+				argDeleteAction:      "delete",
+				argTransferEmail:     "manager@example.com",
+				argTransferRecording: "true",
 			},
 		},
 		{
@@ -113,13 +201,6 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 	}
 }
 
-func TestIsUserNotFound(t *testing.T) {
-	assert.True(t, isUserNotFound(&zoom.APIError{StatusCode: http.StatusNotFound, Body: "nope"}))
-	assert.False(t, isUserNotFound(&zoom.APIError{StatusCode: http.StatusForbidden, Body: "nope"}))
-	assert.False(t, isUserNotFound(assert.AnError))
-	assert.False(t, isUserNotFound(nil))
-}
-
 func TestMapAPIError(t *testing.T) {
 	// These expectations follow uhttp.GrpcCodeFromHTTPStatus (baton-sdk
 	// v0.25.0) rather than a hand-rolled mapping: 429 and 5xx map to
@@ -141,6 +222,7 @@ func TestMapAPIError(t *testing.T) {
 		{name: "503 maps to Unavailable (retryable)", err: &zoom.APIError{StatusCode: http.StatusServiceUnavailable}, wantCode: codes.Unavailable, wantStatus: true},
 		{name: "400 maps to InvalidArgument", err: &zoom.APIError{StatusCode: http.StatusBadRequest}, wantCode: codes.InvalidArgument, wantStatus: true},
 		{name: "409 maps to AlreadyExists", err: &zoom.APIError{StatusCode: http.StatusConflict}, wantCode: codes.AlreadyExists, wantStatus: true},
+		{name: "already-mapped status is preserved", err: status.Error(codes.Unavailable, "rate limited"), wantCode: codes.Unavailable, wantStatus: true},
 		{name: "non-APIError is left unmapped", err: assert.AnError, wantStatus: false},
 	}
 
@@ -151,7 +233,9 @@ func TestMapAPIError(t *testing.T) {
 				assert.Equal(t, tt.wantCode, status.Code(mapped))
 
 				var apiErr *zoom.APIError
-				assert.True(t, errors.As(mapped, &apiErr), "errors.As should still find the wrapped *zoom.APIError")
+				if errors.As(tt.err, &apiErr) {
+					assert.True(t, errors.As(mapped, &apiErr), "errors.As should still find the wrapped *zoom.APIError")
+				}
 			} else {
 				assert.Equal(t, codes.Unknown, status.Code(mapped))
 			}
@@ -187,10 +271,11 @@ func mockZoomServer(t *testing.T, getUser func(id string) (status int, body stri
 	}))
 }
 
-func newTestUserResourceType(baseURL string) *userResourceType {
+func newTestUserResourceType(t *testing.T, baseURL string) *userResourceType {
+	t.Helper()
 	return &userResourceType{
 		resourceType: nil,
-		client:       zoom.NewClient(http.DefaultClient, "test-token", baseURL),
+		client:       newZoomTestClient(t, http.DefaultClient, baseURL),
 	}
 }
 
@@ -207,7 +292,7 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	)
 	defer srv.Close()
 
-	u := newTestUserResourceType(srv.URL)
+	u := newTestUserResourceType(t, srv.URL)
 	args := newActionArgs(t, map[string]any{
 		argUserID:          userIDArg("abc"),
 		argDeleteAction:    "delete",
@@ -235,11 +320,10 @@ func TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess(t *testing.T) {
 	)
 	defer srv.Close()
 
-	u := newTestUserResourceType(srv.URL)
+	u := newTestUserResourceType(t, srv.URL)
 	args := newActionArgs(t, map[string]any{
-		argUserID:        userIDArg("abc"),
-		argDeleteAction:  "delete",
-		argTransferEmail: "manager@example.com",
+		argUserID:       userIDArg("abc"),
+		argDeleteAction: "delete",
 	})
 
 	result, _, err := u.transferAndDeleteUserAction(context.Background(), args)
@@ -247,6 +331,27 @@ func TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Fields["success"].GetBoolValue())
 	assert.Contains(t, result.Fields["message"].GetStringValue(), "already removed")
+}
+
+func TestTransferAndDeleteUserAction_GenericDelete404IsError(t *testing.T) {
+	srv := mockZoomServer(t,
+		func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
+		func(id string, query map[string][]string) (int, string) {
+			return http.StatusNotFound, `upstream route not found`
+		},
+	)
+	defer srv.Close()
+
+	u := newTestUserResourceType(t, srv.URL)
+	args := newActionArgs(t, map[string]any{
+		argUserID:       userIDArg("abc"),
+		argDeleteAction: "delete",
+	})
+
+	result, _, err := u.transferAndDeleteUserAction(context.Background(), args)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 // TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError
@@ -264,7 +369,7 @@ func TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError(t
 	)
 	defer srv.Close()
 
-	u := newTestUserResourceType(srv.URL)
+	u := newTestUserResourceType(t, srv.URL)
 	args := newActionArgs(t, map[string]any{
 		argUserID:          userIDArg("abc"),
 		argDeleteAction:    "delete",
@@ -325,7 +430,7 @@ func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
 			)
 			defer srv.Close()
 
-			u := newTestUserResourceType(srv.URL)
+			u := newTestUserResourceType(t, srv.URL)
 			result, _, err := u.transferAndDeleteUserAction(context.Background(), newActionArgs(t, tt.args))
 			require.NoError(t, err)
 			require.NotNil(t, result)
