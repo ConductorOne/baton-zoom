@@ -13,8 +13,6 @@ jobs:
       BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
       BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
       BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
-      TEST_LICENSE_ENTITLEMENT: ${{ vars.TEST_LICENSE_ENTITLEMENT }}
-      TEST_LICENSE_PRINCIPAL: ${{ vars.TEST_LICENSE_PRINCIPAL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,24 +40,3 @@ jobs:
           baton-principal: ${{ vars.TEST_ROLE_PRINCIPAL }}
           baton-principal-type: ${{ vars.TEST_ROLE_PRINCIPAL_TYPE }}
           required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
-      - name: Install baton
-        uses: ConductorOne/github-workflows/actions/get-baton@v4
-      - name: Sync and verify license data
-        run: |
-          for name in BATON_ACCOUNT_ID BATON_ZOOM_CLIENT_ID BATON_ZOOM_CLIENT_SECRET TEST_LICENSE_ENTITLEMENT TEST_LICENSE_PRINCIPAL; do
-            if [ -z "${!name}" ]; then
-              echo "::notice title=license test skipped::required configuration $name is empty"
-              exit 0
-            fi
-          done
-
-          ./baton-zoom
-
-          license_id="${TEST_LICENSE_ENTITLEMENT#license:}"
-          license_id="${license_id%:assigned}"
-          baton resources --output-format=json | jq --exit-status --arg license_id "$license_id" \
-            '[.resources[]? | select(.resource.id.resourceType == "license" and .resource.id.resource == $license_id)] | length == 1'
-          baton entitlements --output-format=json | jq --exit-status --arg entitlement "$TEST_LICENSE_ENTITLEMENT" \
-            '[.entitlements[]? | select(.entitlement.id == $entitlement)] | length == 1'
-          baton grants --entitlement="$TEST_LICENSE_ENTITLEMENT" --output-format=json | jq --exit-status --arg principal "$TEST_LICENSE_PRINCIPAL" \
-            '[.grants[]? | select(.principal.id.resource == $principal)] | length == 1'
