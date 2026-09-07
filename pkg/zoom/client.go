@@ -21,12 +21,14 @@ type Client struct {
 }
 
 // APIError wraps a non-2xx Zoom API response so callers can inspect the
-// status and Zoom error code.
+// status and Zoom error code. It is never a json.Unmarshal target: doRequest
+// decodes Zoom's error envelope separately and copies Code and Message in, so
+// a response body can't overwrite StatusCode or Body.
 type APIError struct {
 	StatusCode int
 	Body       string
-	Code       int    `json:"code"`
-	Message    string `json:"message"`
+	Code       int
+	Message    string
 }
 
 func (e *APIError) Error() string {
@@ -569,9 +571,18 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{StatusCode: resp.StatusCode, Body: string(b)}
-		if err := json.Unmarshal(b, apiErr); err != nil && !json.Valid(b) {
-			apiErr.Code = 0
-			apiErr.Message = ""
+		// Decode into a dedicated envelope rather than into apiErr: its
+		// StatusCode and Body carry the real response, and encoding/json would
+		// match them case-insensitively against "statusCode"/"body" keys in an
+		// intermediary's error payload, overwriting what IsUserNotFound and the
+		// gRPC status mapping depend on.
+		var envelope struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(b, &envelope); err == nil {
+			apiErr.Code = envelope.Code
+			apiErr.Message = envelope.Message
 		}
 		return nil, apiErr
 	}

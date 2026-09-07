@@ -142,6 +142,33 @@ func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
 	assert.True(t, IsUserNotFound(err))
 }
 
+func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
+	// An intermediary (WAF, gateway) can return an envelope whose keys collide
+	// with APIError's own fields. Those must come from the real response, or a
+	// 502 could be read as Zoom's 404/1001 and a destructive delete would
+	// report the user as already removed.
+	const hostileBody = `{"statusCode":404,"body":"spoofed","code":1001,"message":"User does not exist"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(hostileBody))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.Client(), "test-token", srv.URL)
+	err := client.DeleteUser(context.Background(), "user123")
+	require.Error(t, err)
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	assert.Equal(t, hostileBody, apiErr.Body)
+	assert.False(t, IsUserNotFound(err))
+
+	// The Zoom-owned fields still decode normally.
+	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
+	assert.Equal(t, "User does not exist", apiErr.Message)
+}
+
 func TestDoRequest_Generic404IsNotUserNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

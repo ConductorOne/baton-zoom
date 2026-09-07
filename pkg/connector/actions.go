@@ -13,6 +13,8 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -184,6 +186,17 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		}
 		resp.Body.Close()
 	}
+
+	// Record what is about to be removed: this call is irreversible for
+	// action=delete and the SDK logs nothing about it. transfer_email is
+	// deliberately omitted — it identifies a person.
+	ctxzap.Extract(ctx).Info("baton-zoom: transfer_and_delete_user: removing user",
+		zap.String("user_id", userID),
+		zap.String("action", deleteAction),
+		zap.Bool("transfer_meeting", transferMeeting),
+		zap.Bool("transfer_webinar", transferWebinar),
+		zap.Bool("transfer_recording", transferRecording),
+	)
 
 	err = u.client.DeleteUserWithTransfer(ctx, userID, zoom.DeleteUserOptions{
 		Action:            zoom.DeleteAction(deleteAction),
