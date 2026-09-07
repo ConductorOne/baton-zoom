@@ -21,7 +21,7 @@ Yes:
 
 | Resource     | Operations                                         | API surface                                                                                             |
 | ------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Users**    | **Create account**, **Delete user**                | `POST /v2/users` (action=`create`); `DELETE /v2/users/{userId}`                                         |
+| **Users**    | **Create account**, **Delete user**, **`transfer_and_delete_user` action** | `POST /v2/users` (action=`create`); `DELETE /v2/users/{userId}` (optional `transfer_email` / `transfer_meeting` / `transfer_webinar` / `transfer_recording`) |
 | **Groups**   | Add/Remove members, Add/Remove admins              | `POST /v2/groups/{groupId}/members`; `DELETE /v2/groups/{groupId}/members/{userId}`; same for `/admins` |
 | **Roles**    | Assign/Unassign role to a user                     | `POST /v2/roles/{roleId}/members`; `DELETE /v2/roles/{roleId}/members/{userId}`                         |
 | **Licenses** | Grant (assign a tier), Revoke (downgrade to Basic) | `PATCH /v2/users/{userId}` with body `{"type": N}`                                                      |
@@ -92,7 +92,7 @@ billing:read:plan_usage:admin
 
 #### Provisioning (read + write) scopes
 
-Add **all sync scopes above**, plus:
+Add **all sync scopes above**, plus the write scopes below. `user:delete:user:admin` is also required to invoke the `transfer_and_delete_user` connector action (`DELETE /v2/users/{userId}`, with optional transfer query parameters). Recipient lookup on that action reuses `user:read:user:admin` from the sync set.
 
 ```text
 user:write:user:admin
@@ -114,6 +114,7 @@ Per-resource breakdown of which scope unlocks which operation:
 | -------- | ---------------------------------- | ---------------------------------------------------------------------- |
 | User     | CreateAccount                      | `user:write:user:admin`                                                |
 | User     | Delete                             | `user:delete:user:admin`                                               |
+| User     | `transfer_and_delete_user`         | `user:delete:user:admin`; `user:read:user:admin` when verifying `transfer_email` |
 | Group    | Add/remove member                  | `group:write:member:admin` + `group:delete:member:admin`               |
 | Group    | Add/remove admin                   | `group:write:administrator:admin` + `group:delete:administrator:admin` |
 | Role     | Assign/unassign role               | `role:write:member:admin` + `role:delete:member:admin`                 |
@@ -127,7 +128,7 @@ Per-resource breakdown of which scope unlocks which operation:
 | `billing:read:plan_usage:admin`    | Optional  | Optional                   |
 | `user:write:user:admin`            | No        | Yes                        |
 | `user:update:user:admin`           | No        | Yes (license Grant/Revoke) |
-| `user:delete:user:admin`           | No        | Yes                        |
+| `user:delete:user:admin`           | No        | Yes (user delete + `transfer_and_delete_user`) |
 | `role:write:member:admin`          | No        | Yes                        |
 | `role:delete:member:admin`         | No        | Yes                        |
 | `group:write:member:admin`         | No        | Yes                        |

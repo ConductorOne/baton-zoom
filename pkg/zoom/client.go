@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,11 +20,38 @@ type Client struct {
 	baseURL    string
 }
 
+// APIError preserves HTTP response metadata and Zoom error details.
+// Never unmarshal a response body into this type: StatusCode and Body are
+// exported and untagged, so json.Unmarshal would match "statusCode"/"body"
+// case-insensitively and overwrite the real HTTP values. doRequest decodes
+// Zoom's code/message into a separate envelope for that reason.
+type APIError struct {
+	StatusCode int
+	Body       string
+	Code       int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Body)
+}
+
 const (
 	defaultBaseURL   = "https://api.zoom.us/v2"
 	defaultAuthURL   = "https://zoom.us/oauth/token"
 	resourcePageSize = "50"
+
+	// UserNotFoundErrorCode is Zoom's API error code for a missing user.
+	UserNotFoundErrorCode = 1001
 )
+
+// IsUserNotFound requires Zoom's user-not-found code, not only HTTP 404.
+func IsUserNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		apiErr.StatusCode == http.StatusNotFound &&
+		apiErr.Code == UserNotFoundErrorCode
+}
 
 func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
 	if baseURL == "" {
@@ -248,10 +276,13 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/users/", userId)
-	var res User
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	if err != nil {
+		return User{}, nil, err
+	}
 
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
+	var res User
+	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
 	if err != nil {
 		return User{}, nil, err
 	}
@@ -411,12 +442,49 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 }
 
 func (c *Client) DeleteUser(ctx context.Context, userId string) error {
+	return c.DeleteUserWithTransfer(ctx, userId, DeleteUserOptions{})
+}
+
+// DeleteUserOptions configures the removal action and optional ownership transfer.
+type DeleteUserOptions struct {
+	// Empty uses Zoom's default action, Disassociate.
+	Action            DeleteAction
+	TransferEmail     string
+	TransferMeeting   bool
+	TransferWebinar   bool
+	TransferRecording bool
+}
+
+// DeleteUserWithTransfer removes a user and applies optional transfer settings.
+// Zoom requires TransferEmail whenever any Transfer* flag is set; the caller
+// must validate that (this method does not).
+func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
 	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
 		return err
 	}
 
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, nil, nil)
+	var params url.Values
+	if opts.Action != "" || opts.TransferEmail != "" || opts.TransferMeeting || opts.TransferWebinar || opts.TransferRecording {
+		params = url.Values{}
+		if opts.Action != "" {
+			params.Set("action", string(opts.Action))
+		}
+		if opts.TransferEmail != "" {
+			params.Set("transfer_email", opts.TransferEmail)
+		}
+		if opts.TransferMeeting {
+			params.Set("transfer_meeting", "true")
+		}
+		if opts.TransferWebinar {
+			params.Set("transfer_webinar", "true")
+		}
+		if opts.TransferRecording {
+			params.Set("transfer_recording", "true")
+		}
+	}
+
+	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, params, nil)
 	if err != nil {
 		return err
 	}
@@ -497,7 +565,17 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("request failed with status code %d: %s", resp.StatusCode, string(b))
+		apiErr := &APIError{StatusCode: resp.StatusCode, Body: string(b)}
+		// Decode separately so payload fields cannot overwrite HTTP metadata.
+		var envelope struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(b, &envelope); err == nil {
+			apiErr.Code = envelope.Code
+			apiErr.Message = envelope.Message
+		}
+		return nil, apiErr
 	}
 
 	if err := json.Unmarshal(b, &res); err != nil {
