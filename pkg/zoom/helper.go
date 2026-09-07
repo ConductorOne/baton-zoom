@@ -64,7 +64,7 @@ func (e *OAuthError) Error() string {
 	if e.Reason != "" {
 		return e.Reason
 	}
-	return e.Body
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Body)
 }
 
 // mapAuthenticationError narrows Zoom's HTTP 400 credential responses to

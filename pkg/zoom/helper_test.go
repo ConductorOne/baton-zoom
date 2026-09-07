@@ -61,6 +61,69 @@ func TestWithZoomErrorResponsePreservesDecodedCode(t *testing.T) {
 	assert.True(t, IsUserNotFound(err))
 }
 
+func TestWithZoomOAuthErrorResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantError  bool
+		wantCode   string
+		wantReason string
+	}{
+		{
+			name:       "success response",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "valid OAuth error",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":"invalid_client","reason":"Invalid client credentials"}`,
+			wantError:  true,
+			wantCode:   "invalid_client",
+			wantReason: "Invalid client credentials",
+		},
+		{
+			name:       "valid JSON preserves decoded code after type error",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":"invalid_client","reason":123}`,
+			wantError:  true,
+			wantCode:   "invalid_client",
+		},
+		{
+			name:       "non-JSON body",
+			statusCode: http.StatusBadGateway,
+			body:       "<html>Bad Gateway</html>",
+			wantError:  true,
+		},
+		{
+			name:       "empty error body",
+			statusCode: http.StatusBadGateway,
+			wantError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oauthErr := &OAuthError{}
+			err := withZoomOAuthErrorResponse(oauthErr)(&uhttp.WrapperResponse{
+				StatusCode: tt.statusCode,
+				Body:       []byte(tt.body),
+			})
+
+			if !tt.wantError {
+				require.NoError(t, err)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Same(t, oauthErr, err)
+			assert.Equal(t, tt.wantCode, oauthErr.Code)
+			assert.Equal(t, tt.wantReason, oauthErr.Reason)
+			assert.NotEmpty(t, oauthErr.Error())
+		})
+	}
+}
+
 func TestIsUserNotFound(t *testing.T) {
 	assert.True(t, IsUserNotFound(&APIError{
 		StatusCode: http.StatusNotFound,
