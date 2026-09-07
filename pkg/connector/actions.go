@@ -121,15 +121,11 @@ func (u *userResourceType) transferAndDeleteUserAction(
 	if userID == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id is required")
 	}
-	// RequireResourceIDArg doesn't enforce AllowedResourceTypeIds itself —
-	// the platform does that before invocation, but --invoke-action (local
-	// and CI testing) bypasses that check, so a wrong-type reference would
-	// otherwise reach the delete call below.
+	// Local --invoke-action calls bypass the schema's resource type check.
 	if resourceType := userRef.GetResourceType(); resourceType != resourceTypeUser.Id {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must reference a %q resource, got %q", resourceTypeUser.Id, resourceType)
 	}
-	// Path separators and standalone dot segments are never valid Zoom user
-	// IDs. Reject them before url.JoinPath can normalize the target endpoint.
+	// Reject values url.JoinPath could normalize to another endpoint.
 	if invalidUserPathSegment(userID) {
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: user_id must not contain path separators or standalone dot segments")
 	}
@@ -170,12 +166,8 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email must not contain path separators or standalone dot segments")
 	}
 
-	// Confirm transfer_email resolves to a real Zoom user before the
-	// destructive delete call. Zoom's DELETE /v2/users/{userId} returns the
-	// same 404 whether userID or transfer_email is the one that doesn't
-	// exist, with no structured field to tell them apart — so the only
-	// reliable way to make a later 404 from that call unambiguous is to rule
-	// out transfer_email as the cause beforehand.
+	// Confirm the recipient first because Zoom's DELETE response does not
+	// identify which user caused a 404.
 	if transferEmail != "" {
 		_, resp, err := u.client.GetUser(ctx, transferEmail)
 		if err != nil {
@@ -187,9 +179,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		resp.Body.Close()
 	}
 
-	// Record what is about to be removed: this call is irreversible for
-	// action=delete and the SDK logs nothing about it. transfer_email is
-	// deliberately omitted — it identifies a person.
+	// Do not log transfer_email because it is PII.
 	ctxzap.Extract(ctx).Info("baton-zoom: transfer_and_delete_user: removing user",
 		zap.String("user_id", userID),
 		zap.String("action", deleteAction),
@@ -213,12 +203,8 @@ func (u *userResourceType) transferAndDeleteUserAction(
 					actions.NewStringReturnField("message", fmt.Sprintf("user %s was already removed from the account", userID)),
 				), nil, nil
 			}
-			// The recipient preflight above only proves transfer_email existed
-			// before this call — it's no proof the transfer itself completed.
-			// A 404 here could mean the delete-with-transfer already ran
-			// (safe to treat as done) or that it never ran with a transfer at
-			// all (e.g. a prior no-transfer delete already removed the user).
-			// Zoom gives no signal to tell those apart, so don't claim success.
+			// Recipient validation does not prove the transfer completed, and
+			// Zoom cannot distinguish prior success from a failed transfer.
 			return nil, nil, status.Errorf(codes.FailedPrecondition,
 				"baton-zoom: transfer_and_delete_user: user %s was already removed from the account, but the requested transfer to %s cannot be confirmed; verify manually", userID, transferEmail)
 		}
@@ -264,8 +250,7 @@ func optionalBoolArg(args *structpb.Struct, key string) (bool, error) {
 	return false, fmt.Errorf("%s must be a boolean", key)
 }
 
-// mapAPIError maps the raw Zoom client's HTTP status to the gRPC code used by
-// the SDK retryer. WrapErrors preserves *zoom.APIError for errors.As checks.
+// mapAPIError maps Zoom HTTP errors while preserving the typed API error.
 func mapAPIError(err error, prefix string) error {
 	var apiErr *zoom.APIError
 	if !errors.As(err, &apiErr) {

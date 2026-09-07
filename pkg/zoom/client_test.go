@@ -20,8 +20,7 @@ func TestGetUser_TrailingSlashInBaseURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// A trailing slash on --base-url is a plausible operator mistake, so the
-	// path must not come out as ".../v2//users/abc123".
+	// url.JoinPath must normalize a trailing base URL slash.
 	client := NewClient(srv.Client(), "test-token", srv.URL+"/")
 	_, resp, err := client.GetUser(context.Background(), "abc123")
 	require.NoError(t, err)
@@ -115,9 +114,7 @@ func TestGetUser_EscapesQuerySeparatorInID(t *testing.T) {
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 
-	// r.URL.Path is decoded, so it can't distinguish a "?" that stayed in the
-	// path from one that opened a query string. EscapedPath and RawQuery are
-	// what actually went out on the wire.
+	// EscapedPath and RawQuery verify that "?" remains part of the ID.
 	assert.Empty(t, gotRawQuery)
 	assert.Equal(t, "/users/"+id, gotPath)
 	assert.Equal(t, "/users/user@example.com%3Fadmin=true", gotEscapedPath)
@@ -143,10 +140,7 @@ func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
 }
 
 func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
-	// An intermediary (WAF, gateway) can return an envelope whose keys collide
-	// with APIError's own fields. Those must come from the real response, or a
-	// 502 could be read as Zoom's 404/1001 and a destructive delete would
-	// report the user as already removed.
+	// Payload fields must not replace the actual HTTP status or body.
 	const hostileBody = `{"statusCode":404,"body":"spoofed","code":1001,"message":"User does not exist"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

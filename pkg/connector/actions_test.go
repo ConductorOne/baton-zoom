@@ -202,12 +202,7 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 }
 
 func TestMapAPIError(t *testing.T) {
-	// These expectations follow uhttp.GrpcCodeFromHTTPStatus (baton-sdk
-	// v0.25.0) rather than a hand-rolled mapping: 429 and 5xx map to
-	// Unavailable specifically because the SDK's retry classifier
-	// (pkg/retry) only retries codes.Unavailable and codes.DeadlineExceeded —
-	// anything else (e.g. ResourceExhausted, Internal) is treated as a
-	// permanent failure even for a transient rate limit or server error.
+	// Match the SDK mapping so transient 429 and 5xx errors remain retryable.
 	tests := []struct {
 		name       string
 		err        error
@@ -256,10 +251,7 @@ func mockZoomServer(t *testing.T, getUser func(id string) (status int, body stri
 		case http.MethodDelete:
 			status, body = deleteUser(id, r.URL.Query())
 		default:
-			// t.Fatal/Fatalf must run on the test goroutine — calling it here
-			// would Goexit the handler without writing a response. t.Errorf
-			// is goroutine-safe: it flags the failure without exiting, and
-			// the handler still returns a real response below.
+			// Keep the handler alive after reporting failures.
 			t.Errorf("unexpected method %s", r.Method)
 			status, body = http.StatusMethodNotAllowed, ""
 		}
@@ -281,9 +273,7 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	srv := mockZoomServer(t,
 		func(id string) (int, string) { return http.StatusNotFound, `{"code":1001,"message":"User not exist"}` },
 		func(id string, query map[string][]string) (int, string) {
-			// t.Error, not t.Fatal: this runs on the httptest handler
-			// goroutine, and Fatal's Goexit would leave the request without
-			// a response instead of failing the test cleanly.
+			// Keep the handler alive after reporting failures.
 			t.Error("DELETE should not be called when transfer_email verification fails")
 			return http.StatusInternalServerError, ""
 		},
@@ -305,10 +295,7 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "ghost@example.com")
 }
 
-// TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess deliberately sets
-// no transfer flags: the delete-404-is-success shortcut is only safe here
-// because nothing was promised to be transferred. See the sibling
-// _TransferRequestedAndAlreadyDeletedIsError test for the opposite case.
+// A missing user is idempotent only when no transfer was requested.
 func TestTransferAndDeleteUserAction_AlreadyDeletedIsSuccess(t *testing.T) {
 	srv := mockZoomServer(t,
 		func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
@@ -352,12 +339,7 @@ func TestTransferAndDeleteUserAction_GenericDelete404IsError(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
-// TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError
-// covers the case the previous test can't: when a transfer WAS requested,
-// the recipient preflight only proves transfer_email existed before the
-// delete call — it's not proof the transfer itself completed. A 404 on
-// delete here must not be reported as success, since that would silently
-// overclaim "data transferred" when Zoom gives no way to confirm it was.
+// A 404 cannot prove a requested transfer completed.
 func TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError(t *testing.T) {
 	srv := mockZoomServer(t,
 		func(id string) (int, string) { return http.StatusOK, `{"id":"manager"}` },
@@ -404,10 +386,7 @@ func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {
 				argTransferMeeting: true,
 			},
 			wantMessage: "user abc data transferred and disassociated from the account",
-			// Asserting the actual query sent to the client — not just the
-			// human-readable message — catches a field swapped in the
-			// zoom.DeleteUserOptions{} literal (e.g. TransferWebinar for
-			// TransferMeeting) that the message text alone wouldn't reveal.
+			// Verify the options sent to Zoom, not only the response message.
 			wantQuery: url.Values{
 				"action":           []string{"disassociate"},
 				"transfer_email":   []string{"manager@example.com"},

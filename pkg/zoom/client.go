@@ -20,10 +20,7 @@ type Client struct {
 	baseURL    string
 }
 
-// APIError wraps a non-2xx Zoom API response so callers can inspect the
-// status and Zoom error code. It is never a json.Unmarshal target: doRequest
-// decodes Zoom's error envelope separately and copies Code and Message in, so
-// a response body can't overwrite StatusCode or Body.
+// APIError preserves HTTP response metadata and Zoom error details.
 type APIError struct {
 	StatusCode int
 	Body       string
@@ -44,8 +41,7 @@ const (
 	UserNotFoundErrorCode = 1001
 )
 
-// IsUserNotFound reports whether Zoom explicitly identified a missing user.
-// A generic proxy or routing 404 is not enough to claim idempotent success.
+// IsUserNotFound requires Zoom's user-not-found code, not only HTTP 404.
 func IsUserNotFound(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) &&
@@ -445,13 +441,9 @@ func (c *Client) DeleteUser(ctx context.Context, userId string) error {
 	return c.DeleteUserWithTransfer(ctx, userId, DeleteUserOptions{})
 }
 
-// DeleteUserOptions configures the query parameters DELETE /v2/users/{userId}
-// accepts for reassigning a user's meetings, webinars, and cloud recordings to
-// another user (TransferEmail) as part of removing them from the account.
+// DeleteUserOptions configures ownership transfer during user removal.
 type DeleteUserOptions struct {
-	// Action is Disassociate (unlink the user from the account) or Delete
-	// (permanently remove the user). Empty defers to Zoom's default
-	// (disassociate).
+	// Empty uses Zoom's default action, Disassociate.
 	Action            DeleteAction
 	TransferEmail     string
 	TransferMeeting   bool
@@ -459,10 +451,7 @@ type DeleteUserOptions struct {
 	TransferRecording bool
 }
 
-// DeleteUserWithTransfer removes a user via DELETE /v2/users/{userId},
-// optionally transferring their meetings, webinars, and cloud recordings to
-// opts.TransferEmail first. Zoom requires TransferEmail whenever any of the
-// transfer flags is set; the caller is responsible for that validation.
+// DeleteUserWithTransfer removes a user and applies optional transfer settings.
 func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
 	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
@@ -571,11 +560,7 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, met
 
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{StatusCode: resp.StatusCode, Body: string(b)}
-		// Decode into a dedicated envelope rather than into apiErr: its
-		// StatusCode and Body carry the real response, and encoding/json would
-		// match them case-insensitively against "statusCode"/"body" keys in an
-		// intermediary's error payload, overwriting what IsUserNotFound and the
-		// gRPC status mapping depend on.
+		// Decode separately so payload fields cannot overwrite HTTP metadata.
 		var envelope struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
