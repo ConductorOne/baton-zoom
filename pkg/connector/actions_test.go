@@ -292,7 +292,8 @@ func TestTransferAndDeleteUserAction_TransferEmailNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	assert.Contains(t, err.Error(), "ghost@example.com")
+	assert.Contains(t, err.Error(), "transfer recipient was not found")
+	assert.NotContains(t, err.Error(), "ghost@example.com")
 }
 
 // A missing user is idempotent only when no transfer was requested.
@@ -361,7 +362,8 @@ func TestTransferAndDeleteUserAction_TransferRequestedAndAlreadyDeletedIsError(t
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
-	assert.Contains(t, err.Error(), "manager@example.com")
+	assert.Contains(t, err.Error(), "requested transfer cannot be confirmed")
+	assert.NotContains(t, err.Error(), "manager@example.com")
 }
 
 func TestTransferAndDeleteUserAction_SuccessMessages(t *testing.T) {

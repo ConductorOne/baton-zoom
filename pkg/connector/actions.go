@@ -168,18 +168,24 @@ func (u *userResourceType) transferAndDeleteUserAction(
 
 	// Confirm the recipient first because Zoom's DELETE response does not
 	// identify which user caused a 404.
+	var rateLimitAnnos annotations.Annotations
 	if transferEmail != "" {
 		_, resp, err := u.client.GetUser(ctx, transferEmail)
 		if err != nil {
 			if zoom.IsUserNotFound(err) {
-				return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer_email user not found: %s", transferEmail)
+				return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer recipient was not found")
 			}
-			return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: verify transfer_email %s", transferEmail))
+			return nil, nil, mapAPIError(err, "baton-zoom: transfer_and_delete_user: verify transfer recipient")
 		}
+		rateLimitAnnos, err = parseResp(resp)
 		resp.Body.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("baton-zoom: transfer_and_delete_user: parse rate-limit headers: %w", err)
+		}
 	}
 
-	// Do not log transfer_email because it is PII.
+	// Do not log transfer_email because it is PII. Keep it out of returned
+	// errors too: the SDK logs handler errors.
 	ctxzap.Extract(ctx).Info("baton-zoom: transfer_and_delete_user: removing user",
 		zap.String("user_id", userID),
 		zap.String("action", deleteAction),
@@ -201,21 +207,21 @@ func (u *userResourceType) transferAndDeleteUserAction(
 				return actions.NewReturnValues(
 					true,
 					actions.NewStringReturnField("message", fmt.Sprintf("user %s was already removed from the account", userID)),
-				), nil, nil
+				), rateLimitAnnos, nil
 			}
 			// Recipient validation does not prove the transfer completed, and
 			// Zoom cannot distinguish prior success from a failed transfer.
-			return nil, nil, status.Errorf(codes.FailedPrecondition,
-				"baton-zoom: transfer_and_delete_user: user %s was already removed from the account, but the requested transfer to %s cannot be confirmed; verify manually", userID, transferEmail)
+			return nil, rateLimitAnnos, status.Errorf(codes.FailedPrecondition,
+				"baton-zoom: transfer_and_delete_user: user %s was already removed from the account, but the requested transfer cannot be confirmed; verify manually", userID)
 		}
-		return nil, nil, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: %s", userID))
+		return nil, rateLimitAnnos, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: %s", userID))
 	}
 
 	message := fmt.Sprintf("user %s %sd from the account", userID, deleteAction)
 	if transferring {
 		message = fmt.Sprintf("user %s data transferred and %sd from the account", userID, deleteAction)
 	}
-	return actions.NewReturnValues(true, actions.NewStringReturnField("message", message)), nil, nil
+	return actions.NewReturnValues(true, actions.NewStringReturnField("message", message)), rateLimitAnnos, nil
 }
 
 func optionalStringArg(args *structpb.Struct, key string) (string, error) {
