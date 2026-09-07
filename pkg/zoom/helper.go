@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -36,6 +37,8 @@ type APIError struct {
 	Body       string `json:"-"`
 	Code       int    `json:"code"`
 	Msg        string `json:"message"`
+	OAuthError string `json:"error"`
+	Reason     string `json:"reason"`
 }
 
 var _ uhttp.ErrorResponse = (*APIError)(nil)
@@ -48,7 +51,22 @@ func (e *APIError) Message() string {
 	if e.Msg != "" {
 		return e.Msg
 	}
+	if e.Reason != "" {
+		return e.Reason
+	}
 	return e.Body
+}
+
+// mapAuthenticationError narrows Zoom's HTTP 400 invalid_client response to
+// Unauthenticated. BaseHttpClient correctly maps ordinary HTTP 400 responses
+// to InvalidArgument, but Zoom uses 400 rather than 401 for invalid OAuth
+// credentials.
+func mapAuthenticationError(err error) error {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.OAuthError == "invalid_client" {
+		return uhttp.WrapErrors(codes.Unauthenticated, "authentication failed", err)
+	}
+	return err
 }
 
 // withZoomErrorResponse decodes Zoom's error envelope while preserving the

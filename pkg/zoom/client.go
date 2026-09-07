@@ -103,7 +103,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 		defer resp.Body.Close()
 	}
 	if err != nil {
-		return "", err
+		return "", mapAuthenticationError(err)
 	}
 	if res.AccessToken == "" {
 		return "", fmt.Errorf("authentication response missing access_token")
