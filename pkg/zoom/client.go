@@ -97,8 +97,8 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	var res struct {
 		AccessToken string `json:"access_token"`
 	}
-	apiErr := &APIError{}
-	resp, err := baseHTTPClient.Do(req, withZoomErrorResponse(apiErr), withZoomJSONResponse(&res))
+	oauthErr := &OAuthError{}
+	resp, err := baseHTTPClient.Do(req, withZoomOAuthErrorResponse(oauthErr), withZoomJSONResponse(&res))
 	if resp != nil {
 		defer resp.Body.Close()
 	}

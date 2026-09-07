@@ -25,6 +25,7 @@ jobs:
       - name: Build baton-zoom
         run: go build ./cmd/baton-zoom
       - name: Grant/Revoke group membership
+        if: vars.TEST_GROUP_ID != '' && vars.TEST_PRINCIPAL != '' && vars.TEST_PRINCIPAL_TYPE != ''
         uses: ConductorOne/github-workflows/actions/sync-test@v4
         with:
           connector: ./baton-zoom
@@ -33,6 +34,7 @@ jobs:
           baton-principal-type: ${{ vars.TEST_PRINCIPAL_TYPE }}
           required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
       - name: Grant/Revoke role membership
+        if: vars.TEST_ROLE_ENTITLEMENT != '' && vars.TEST_ROLE_PRINCIPAL != '' && vars.TEST_ROLE_PRINCIPAL_TYPE != ''
         uses: ConductorOne/github-workflows/actions/sync-test@v4
         with:
           connector: ./baton-zoom

@@ -37,8 +37,6 @@ type APIError struct {
 	Body       string `json:"-"`
 	Code       int    `json:"code"`
 	Msg        string `json:"message"`
-	OAuthError string `json:"error"`
-	Reason     string `json:"reason"`
 }
 
 var _ uhttp.ErrorResponse = (*APIError)(nil)
@@ -51,22 +49,40 @@ func (e *APIError) Message() string {
 	if e.Msg != "" {
 		return e.Msg
 	}
+	return e.Body
+}
+
+// OAuthError is Zoom's OAuth token error envelope.
+type OAuthError struct {
+	StatusCode int    `json:"-"`
+	Body       string `json:"-"`
+	Code       string `json:"error"`
+	Reason     string `json:"reason"`
+}
+
+func (e *OAuthError) Error() string {
 	if e.Reason != "" {
 		return e.Reason
 	}
 	return e.Body
 }
 
-// mapAuthenticationError narrows Zoom's HTTP 400 invalid_client response to
+// mapAuthenticationError narrows Zoom's HTTP 400 credential responses to
 // Unauthenticated. BaseHttpClient correctly maps ordinary HTTP 400 responses
-// to InvalidArgument, but Zoom uses 400 rather than 401 for invalid OAuth
-// credentials.
+// to InvalidArgument, but Zoom's OAuth endpoint uses 400 for credential and
+// account configuration failures.
 func mapAuthenticationError(err error) error {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) && apiErr.OAuthError == "invalid_client" {
-		return uhttp.WrapErrors(codes.Unauthenticated, "authentication failed", err)
+	var oauthErr *OAuthError
+	if !errors.As(err, &oauthErr) {
+		return err
 	}
-	return err
+
+	switch oauthErr.Code {
+	case "invalid_client", "unauthorized_client", "invalid_grant", "invalid_request":
+		return uhttp.WrapErrors(codes.Unauthenticated, "authentication failed", err)
+	default:
+		return err
+	}
 }
 
 // withZoomErrorResponse decodes Zoom's error envelope while preserving the
@@ -79,7 +95,7 @@ func withZoomErrorResponse(apiErr *APIError) uhttp.DoOption {
 
 		apiErr.StatusCode = resp.StatusCode
 		apiErr.Body = string(resp.Body)
-		if err := json.Unmarshal(resp.Body, apiErr); err != nil {
+		if err := json.Unmarshal(resp.Body, apiErr); err != nil && !json.Valid(resp.Body) {
 			// A proxy or gateway may return HTML or an empty body. Leave Code
 			// unset because only an explicit Zoom code can drive idempotency.
 			apiErr.Code = 0
@@ -87,6 +103,22 @@ func withZoomErrorResponse(apiErr *APIError) uhttp.DoOption {
 		}
 
 		return apiErr
+	}
+}
+
+func withZoomOAuthErrorResponse(oauthErr *OAuthError) uhttp.DoOption {
+	return func(resp *uhttp.WrapperResponse) error {
+		if resp.StatusCode < http.StatusBadRequest {
+			return nil
+		}
+
+		oauthErr.StatusCode = resp.StatusCode
+		oauthErr.Body = string(resp.Body)
+		if err := json.Unmarshal(resp.Body, oauthErr); err != nil && !json.Valid(resp.Body) {
+			oauthErr.Code = ""
+			oauthErr.Reason = ""
+		}
+		return oauthErr
 	}
 }
 

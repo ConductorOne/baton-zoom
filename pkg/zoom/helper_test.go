@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -15,9 +16,6 @@ func TestAPIErrorMessageFallsBackToBody(t *testing.T) {
 	withMessage := &APIError{Msg: "User not exist: abc", Body: `{"code":1001,"message":"User not exist: abc"}`}
 	assert.Equal(t, "User not exist: abc", withMessage.Message())
 
-	withReason := &APIError{Reason: "Invalid client_id or client_secret", OAuthError: "invalid_client"}
-	assert.Equal(t, "Invalid client_id or client_secret", withReason.Message())
-
 	// A non-JSON error body has no message field, so the raw body is all the
 	// detail there is to report.
 	withoutMessage := &APIError{Body: "<html>502 Bad Gateway</html>"}
@@ -25,20 +23,42 @@ func TestAPIErrorMessageFallsBackToBody(t *testing.T) {
 }
 
 func TestMapAuthenticationError(t *testing.T) {
-	invalidClient := &APIError{
-		StatusCode: http.StatusBadRequest,
-		OAuthError: "invalid_client",
-		Reason:     "Invalid client_id or client_secret",
-	}
-	mapped := mapAuthenticationError(invalidClient)
-	assert.Equal(t, codes.Unauthenticated, status.Code(mapped))
+	for _, code := range []string{"invalid_client", "unauthorized_client", "invalid_grant", "invalid_request"} {
+		t.Run(code, func(t *testing.T) {
+			oauthErr := &OAuthError{
+				StatusCode: http.StatusBadRequest,
+				Code:       code,
+				Reason:     "authentication failed",
+			}
+			mapped := mapAuthenticationError(oauthErr)
+			assert.Equal(t, codes.Unauthenticated, status.Code(mapped))
 
-	var apiErr *APIError
-	require.True(t, errors.As(mapped, &apiErr))
-	assert.Same(t, invalidClient, apiErr)
+			var typedErr *OAuthError
+			require.True(t, errors.As(mapped, &typedErr))
+			assert.Same(t, oauthErr, typedErr)
+		})
+	}
 
 	genericBadRequest := status.Error(codes.InvalidArgument, "bad request")
 	assert.Same(t, genericBadRequest, mapAuthenticationError(genericBadRequest))
+
+	unsupportedGrant := errors.Join(
+		genericBadRequest,
+		&OAuthError{StatusCode: http.StatusBadRequest, Code: "unsupported_grant_type"},
+	)
+	assert.Same(t, unsupportedGrant, mapAuthenticationError(unsupportedGrant))
+	assert.Equal(t, codes.InvalidArgument, status.Code(unsupportedGrant))
+}
+
+func TestWithZoomErrorResponsePreservesDecodedCode(t *testing.T) {
+	apiErr := &APIError{}
+	err := withZoomErrorResponse(apiErr)(&uhttp.WrapperResponse{
+		StatusCode: http.StatusNotFound,
+		Body:       []byte(`{"code":1001,"message":124}`),
+	})
+	require.Error(t, err)
+	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
+	assert.True(t, IsUserNotFound(err))
 }
 
 func TestIsUserNotFound(t *testing.T) {
