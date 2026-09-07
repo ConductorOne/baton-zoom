@@ -257,5 +257,11 @@ func mapAPIError(err error, prefix string) error {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
 	code := uhttp.GrpcCodeFromHTTPStatus(apiErr.StatusCode)
-	return uhttp.WrapErrors(code, fmt.Sprintf("%s: %v", prefix, err), err)
+	// Keep *zoom.APIError as the sole carrier of the raw body; joining err
+	// already attaches it, so do not also render err into the status message.
+	msg := prefix
+	if apiErr.Message != "" {
+		msg = fmt.Sprintf("%s: %s", prefix, apiErr.Message)
+	}
+	return uhttp.WrapErrors(code, msg, err)
 }

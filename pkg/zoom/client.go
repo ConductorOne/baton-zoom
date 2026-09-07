@@ -21,6 +21,10 @@ type Client struct {
 }
 
 // APIError preserves HTTP response metadata and Zoom error details.
+// Never unmarshal a response body into this type: StatusCode and Body are
+// exported and untagged, so json.Unmarshal would match "statusCode"/"body"
+// case-insensitively and overwrite the real HTTP values. doRequest decodes
+// Zoom's code/message into a separate envelope for that reason.
 type APIError struct {
 	StatusCode int
 	Body       string
@@ -441,7 +445,7 @@ func (c *Client) DeleteUser(ctx context.Context, userId string) error {
 	return c.DeleteUserWithTransfer(ctx, userId, DeleteUserOptions{})
 }
 
-// DeleteUserOptions configures ownership transfer during user removal.
+// DeleteUserOptions configures the removal action and optional ownership transfer.
 type DeleteUserOptions struct {
 	// Empty uses Zoom's default action, Disassociate.
 	Action            DeleteAction
@@ -452,6 +456,8 @@ type DeleteUserOptions struct {
 }
 
 // DeleteUserWithTransfer removes a user and applies optional transfer settings.
+// Zoom requires TransferEmail whenever any Transfer* flag is set; the caller
+// must validate that (this method does not).
 func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
 	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
