@@ -49,13 +49,8 @@ func New(
 		return nil, fmt.Errorf("zoom-connector: failed to get token: %w", err)
 	}
 
-	zoomClient, err := zoom.NewClient(ctx, httpClient, token, baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("zoom-connector: failed to create client: %w", err)
-	}
-
 	return &Zoom{
-		client:            zoomClient,
+		client:            zoom.NewClient(httpClient, token, baseURL),
 		syncInactiveUsers: syncInactiveUsers,
 		skipLicenseGrants: !syncLicenses,
 	}, nil

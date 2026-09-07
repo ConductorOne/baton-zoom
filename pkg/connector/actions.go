@@ -251,14 +251,9 @@ func optionalBoolArg(args *structpb.Struct, key string) (bool, error) {
 	return false, fmt.Errorf("%s must be a boolean", key)
 }
 
-// mapAPIError attaches a handler-owned prefix while preserving the gRPC code
-// BaseHttpClient already mapped from the HTTP status. It reuses
-// uhttp.GrpcCodeFromHTTPStatus so a 429/5xx stays Unavailable for the SDK
-// retryer, and WrapErrors keeps *zoom.APIError in the chain for errors.As.
+// mapAPIError maps the raw Zoom client's HTTP status to the gRPC code used by
+// the SDK retryer. WrapErrors preserves *zoom.APIError for errors.As checks.
 func mapAPIError(err error, prefix string) error {
-	if code := status.Code(err); code != codes.OK && code != codes.Unknown {
-		return fmt.Errorf("%s: %w", prefix, err)
-	}
 	var apiErr *zoom.APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("%s: %w", prefix, err)

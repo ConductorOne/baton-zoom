@@ -142,16 +142,12 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	l := ctxzap.Extract(ctx)
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Debug(
+		l.Warn(
 			"baton-zoom: only users can be granted role membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
 		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted role membership")
-	}
-
-	result := []*v2.Grant{
-		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
 	}
 
 	user, resp, err := r.client.GetUser(ctx, principal.Id.Resource)
@@ -168,7 +164,7 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	}
 
 	if user.RoleID == entitlement.Resource.Id.Resource {
-		return result, annotations.New(&v2.GrantAlreadyExists{}), nil
+		return nil, annotations.New(&v2.GrantAlreadyExists{}), nil
 	}
 
 	err = r.client.AssignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
@@ -176,7 +172,7 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, nil, fmt.Errorf("baton-zoom: failed to assign role to user: %w", err)
 	}
 
-	return result, nil, nil
+	return nil, nil, nil
 }
 
 func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {

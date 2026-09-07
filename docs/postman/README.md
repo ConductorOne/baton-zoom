@@ -77,7 +77,7 @@ the missing scope is in the error body. The full list this collection exercises:
 
 ## Reproducing the license roundtrip end-to-end
 
-This sequence validates the license roundtrip independently of CI:
+This sequence mirrors the CI workflow's license job:
 
 1. **Auth → Get access token** (token cached in env).
 2. **License tiers → Get plan usage (seat counts)** — note `plan_base.usage`.

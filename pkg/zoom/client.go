@@ -1,9 +1,12 @@
 package zoom
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,38 +16,55 @@ import (
 )
 
 type Client struct {
-	httpClient *uhttp.BaseHttpClient
+	httpClient *http.Client
 	token      string
 	baseURL    string
 }
 
-// NewClient wraps the provided transport with Baton's HTTP client and
-// configures a Zoom API client.
-func NewClient(ctx context.Context, httpClient *http.Client, token string, baseURL string) (*Client, error) {
+// APIError wraps a non-2xx Zoom API response so callers can inspect the
+// status and Zoom error code.
+type APIError struct {
+	StatusCode int
+	Body       string
+	Code       int    `json:"code"`
+	Message    string `json:"message"`
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Body)
+}
+
+const (
+	defaultBaseURL   = "https://api.zoom.us/v2"
+	defaultAuthURL   = "https://zoom.us/oauth/token"
+	resourcePageSize = "50"
+
+	// UserNotFoundErrorCode is Zoom's API error code for a missing user.
+	UserNotFoundErrorCode = 1001
+)
+
+// IsUserNotFound reports whether Zoom explicitly identified a missing user.
+// A generic proxy or routing 404 is not enough to claim idempotent success.
+func IsUserNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		apiErr.StatusCode == http.StatusNotFound &&
+		apiErr.Code == UserNotFoundErrorCode
+}
+
+func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	// Normalize operator-settable base URLs for the client's pre-existing
-	// resource URL builders.
+	// Trim trailing slashes so every "c.baseURL + "/resource/" + id" call
+	// site (and url.PathEscape-based ones) gets a single "/" between them,
+	// regardless of how the operator-settable --base-url flag was entered.
 	baseURL = strings.TrimRight(baseURL, "/")
-	parsedBaseURL, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse base URL %q: %w", baseURL, err)
-	}
-	if parsedBaseURL.Scheme == "" || parsedBaseURL.Host == "" {
-		return nil, fmt.Errorf("invalid base URL %q: scheme and host are required", baseURL)
-	}
-
-	baseHTTPClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("create HTTP client: %w", err)
-	}
-
 	return &Client{
-		httpClient: baseHTTPClient,
+		httpClient: httpClient,
 		token:      token,
 		baseURL:    baseURL,
-	}, nil
+	}
 }
 
 type Payload struct {
@@ -67,46 +87,37 @@ func paginationQuery(nextToken string) url.Values {
 
 // RequestAccessToken creates bearer token needed to use the Zoom API.
 func RequestAccessToken(ctx context.Context, accountId string, clientId string, clientSecret string) (string, error) {
-	httpClient, err := uhttp.NewBasicAuth(clientId, clientSecret).GetClient(
-		ctx,
-		uhttp.WithLogger(true, ctxzap.Extract(ctx)),
-	)
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
-		return "", fmt.Errorf("create authentication client: %w", err)
+		return "", err
 	}
 
-	baseHTTPClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
+	data := url.Values{}
+	data.Add("account_id", accountId)
+	data.Add("grant_type", "account_credentials")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, defaultAuthURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create authentication HTTP client: %w", err)
+		return "", err
 	}
 
-	requestURL, err := url.Parse(defaultAuthURL)
-	if err != nil {
-		return "", fmt.Errorf("parse authentication URL: %w", err)
-	}
-	requestURL.RawQuery = url.Values{
-		"account_id": []string{accountId},
-		"grant_type": []string{"account_credentials"},
-	}.Encode()
+	req.Header.Add("accept", "application/json")
+	req.SetBasicAuth(clientId, clientSecret)
+	req.URL.RawQuery = data.Encode()
 
-	req, err := baseHTTPClient.NewRequest(ctx, http.MethodPost, requestURL, uhttp.WithAcceptJSONHeader())
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("create authentication request: %w", err)
+		return "", err
 	}
+
+	defer resp.Body.Close()
 
 	var res struct {
-		AccessToken string `json:"access_token"`
+		AccessToken string `json:"Access_token"`
 	}
-	oauthErr := &OAuthError{}
-	resp, err := baseHTTPClient.Do(req, withZoomOAuthErrorResponse(oauthErr), withZoomJSONResponse(&res))
-	if resp != nil {
-		defer resp.Body.Close()
-	}
-	if err != nil {
-		return "", mapAuthenticationError(err)
-	}
-	if res.AccessToken == "" {
-		return "", fmt.Errorf("authentication response missing access_token")
+
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", err
 	}
 	return res.AccessToken, nil
 }
@@ -268,12 +279,11 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	// Escape before joining so JoinPath cannot resolve dot segments embedded
-	// in the opaque user ID.
-	requestURL, err := url.JoinPath(c.baseURL, "users", url.PathEscape(userId))
-	if err != nil {
-		return User{}, nil, fmt.Errorf("failed to build user URL: %w", err)
-	}
+	// PathEscape, not url.JoinPath: JoinPath resolves ../ segments in its
+	// inputs, so a userId of "../accounts/me" would otherwise redirect this
+	// request to a different Zoom endpoint entirely. PathEscape confines
+	// userId to a single opaque path segment regardless of its content.
+	requestURL := c.baseURL + "/users/" + url.PathEscape(userId)
 
 	var res User
 	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
@@ -458,12 +468,9 @@ type DeleteUserOptions struct {
 // opts.TransferEmail first. Zoom requires TransferEmail whenever any of the
 // transfer flags is set; the caller is responsible for that validation.
 func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
-	// See GetUser: escape the opaque ID before joining so dot segments cannot
-	// redirect the request to another Zoom endpoint.
-	requestURL, err := url.JoinPath(c.baseURL, "users", url.PathEscape(userId))
-	if err != nil {
-		return fmt.Errorf("failed to build delete user URL: %w", err)
-	}
+	// See GetUser: PathEscape, not url.JoinPath, so a userId containing ../
+	// can't redirect this request to a different Zoom endpoint.
+	requestURL := c.baseURL + "/users/" + url.PathEscape(userId)
 
 	var params url.Values
 	if opts.Action != "" || opts.TransferEmail != "" || opts.TransferMeeting || opts.TransferWebinar || opts.TransferRecording {
@@ -498,9 +505,9 @@ func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts
 // Zoom returns 204 No Content on success and applies any seat consumption or
 // release immediately.
 func (c *Client) PatchUserLicense(ctx context.Context, userId string, licenseType UserType) error {
-	requestURL, err := url.JoinPath(c.baseURL, "users", url.PathEscape(userId))
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
 	if err != nil {
-		return fmt.Errorf("failed to build patch user URL: %w", err)
+		return err
 	}
 
 	requestBody, err := json.Marshal(UserPatchBody{Type: licenseType})
@@ -532,49 +539,51 @@ func (c *Client) GetAccountPlanUsage(ctx context.Context) (*PlanUsage, *http.Res
 	return &res, response, nil
 }
 
-// doRequest sends one Zoom API request through uhttp and decodes its response.
-func (c *Client) doRequest(
-	ctx context.Context,
-	rawURL string,
-	res any,
-	method string,
-	params url.Values,
-	payload []byte,
-) (*http.Response, error) {
-	requestURL, err := url.Parse(rawURL)
+func (c *Client) doRequest(ctx context.Context, url string, res interface{}, method string, params url.Values, payload []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("parse request URL: %w", err)
+		return nil, err
 	}
 
 	if params != nil {
-		requestURL.RawQuery = params.Encode()
+		req.URL.RawQuery = params.Encode()
 	}
 
-	requestOptions := []uhttp.RequestOption{
-		uhttp.WithAcceptJSONHeader(),
-		uhttp.WithBearerToken(c.token),
-	}
-	if method == http.MethodGet {
-		// The client historically performed uncached reads. Keep list and
-		// provisioning results fresh when a long-lived connector syncs after
-		// a mutation.
-		requestOptions = append(requestOptions, uhttp.WithNoCache())
-	}
-	if payload != nil {
-		requestOptions = append(requestOptions, uhttp.WithBody(payload), uhttp.WithContentTypeJSONHeader())
-	}
-	req, err := c.httpClient.NewRequest(ctx, method, requestURL, requestOptions...)
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", c.token))
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, err
 	}
 
-	apiErr := &APIError{}
-	doOptions := []uhttp.DoOption{
-		withZoomErrorResponse(apiErr),
-	}
-	if res != nil {
-		doOptions = append(doOptions, withZoomJSONResponse(res))
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	return c.httpClient.Do(req, doOptions...)
+	if len(b) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return resp, nil
+	}
+
+	if resp.StatusCode >= 400 {
+		apiErr := &APIError{StatusCode: resp.StatusCode, Body: string(b)}
+		if err := json.Unmarshal(b, apiErr); err != nil && !json.Valid(b) {
+			apiErr.Code = 0
+			apiErr.Message = ""
+		}
+		return nil, apiErr
+	}
+
+	if err := json.Unmarshal(b, &res); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
