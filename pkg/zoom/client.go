@@ -10,7 +10,6 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"google.golang.org/grpc/codes"
 )
 
 type Client struct {
@@ -104,9 +103,6 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 		defer resp.Body.Close()
 	}
 	if err != nil {
-		if apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode == http.StatusUnauthorized {
-			return "", uhttp.WrapErrors(codes.Unauthenticated, "authentication failed", err)
-		}
 		return "", err
 	}
 	if res.AccessToken == "" {

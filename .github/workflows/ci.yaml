@@ -44,9 +44,9 @@ jobs:
         uses: ConductorOne/github-workflows/actions/get-baton@v4
       - name: Sync and verify license data
         run: |
-          for name in BATON_ACCOUNT_ID BATON_ZOOM_CLIENT_ID BATON_ZOOM_CLIENT_SECRET; do
+          for name in BATON_ACCOUNT_ID BATON_ZOOM_CLIENT_ID BATON_ZOOM_CLIENT_SECRET TEST_LICENSE_ENTITLEMENT TEST_LICENSE_PRINCIPAL; do
             if [ -z "${!name}" ]; then
-              echo "::notice title=license test skipped::required secret $name is empty"
+              echo "::notice title=license test skipped::required configuration $name is empty"
               exit 0
             fi
           done

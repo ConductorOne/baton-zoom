@@ -10,6 +10,8 @@ import (
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func newZoomTestClient(t *testing.T, httpClient *http.Client, baseURL string) *zoom.Client {
@@ -19,20 +21,18 @@ func newZoomTestClient(t *testing.T, httpClient *http.Client, baseURL string) *z
 	return client
 }
 
-func TestUserDeleteNotFoundClassification(t *testing.T) {
+func TestUserDeleteReturnsNotFound(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
+		name string
+		body string
 	}{
 		{
-			name: "Zoom user not found is idempotent success",
+			name: "Zoom user not found",
 			body: `{"code":1001,"message":"User not exist."}`,
 		},
 		{
-			name:    "generic 404 remains an error",
-			body:    `{"code":2300,"message":"Route not found."}`,
-			wantErr: true,
+			name: "generic 404",
+			body: `{"code":2300,"message":"Route not found."}`,
 		},
 	}
 
@@ -57,11 +57,8 @@ func TestUserDeleteNotFoundClassification(t *testing.T) {
 
 			annos, err := user.Delete(context.Background(), userID)
 			assert.Empty(t, annos)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
+			require.Error(t, err)
+			assert.Equal(t, codes.NotFound, status.Code(err))
 		})
 	}
 }
