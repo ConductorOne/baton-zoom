@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
@@ -56,10 +55,6 @@ func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	// Trim trailing slashes so every "c.baseURL + "/resource/" + id" call
-	// site (and url.PathEscape-based ones) gets a single "/" between them,
-	// regardless of how the operator-settable --base-url flag was entered.
-	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{
 		httpClient: httpClient,
 		token:      token,
@@ -279,11 +274,10 @@ func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken st
 
 // GetUser returns user details.
 func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	// PathEscape, not url.JoinPath: JoinPath resolves ../ segments in its
-	// inputs, so a userId of "../accounts/me" would otherwise redirect this
-	// request to a different Zoom endpoint entirely. PathEscape confines
-	// userId to a single opaque path segment regardless of its content.
-	requestURL := c.baseURL + "/users/" + url.PathEscape(userId)
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	if err != nil {
+		return User{}, nil, err
+	}
 
 	var res User
 	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
@@ -468,9 +462,10 @@ type DeleteUserOptions struct {
 // opts.TransferEmail first. Zoom requires TransferEmail whenever any of the
 // transfer flags is set; the caller is responsible for that validation.
 func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
-	// See GetUser: PathEscape, not url.JoinPath, so a userId containing ../
-	// can't redirect this request to a different Zoom endpoint.
-	requestURL := c.baseURL + "/users/" + url.PathEscape(userId)
+	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	if err != nil {
+		return err
+	}
 
 	var params url.Values
 	if opts.Action != "" || opts.TransferEmail != "" || opts.TransferMeeting || opts.TransferWebinar || opts.TransferRecording {
