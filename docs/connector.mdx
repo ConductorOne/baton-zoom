@@ -42,6 +42,8 @@ Connector actions are custom capabilities that extend C1 automations with app-sp
 |-------------|-------------------|-------------|
 | `transfer_and_delete_user` | `user_id` (resource, required), `action` (string, required: `disassociate` or `delete`), `transfer_email` (string; requires at least one transfer option, and is required when one is set), `transfer_meeting` (bool), `transfer_webinar` (bool), `transfer_recording` (bool) | Reassigns a user's meetings, webinars, and cloud recordings to another Zoom user, then removes the user from the account |
 
+To run this action, give the Zoom app the `user:delete:user:admin` scope. When you set `transfer_email`, C1 confirms that the recipient exists before removing the user, which requires `user:read:user:admin` — a scope the connector already needs to sync accounts. The transfer options do not require any additional scopes.
+
 ## Gather Zoom credentials
 
 Configuring the connector requires you to pass in credentials generated in Zoom. Gather these credentials before you move on.
@@ -93,7 +95,7 @@ On the **Scopes** page, click **+ Add Scopes**. Give the app the following set o
 - user:read:list_users:admin
 - `billing:read:plan_usage:admin` (optional — required only if you want C1 to surface purchased vs. consumed Licensed seat counts)
 
-If you want to use C1 to provision and deprovision Zoom permissions, add these scopes as well:
+If you want to use C1 to provision and deprovision Zoom permissions, or to run the `transfer_and_delete_user` connector action, add these scopes as well:
 
 - role:write:member:admin
 - role:delete:member:admin
@@ -101,7 +103,7 @@ If you want to use C1 to provision and deprovision Zoom permissions, add these s
 - group:delete:member:admin
 - user:write:user:admin _(create users)_
 - user:update:user:admin _(required to assign/revoke a license tier)_
-- user:delete:user:admin
+- user:delete:user:admin _(delete users; also required for the `transfer_and_delete_user` connector action)_
 - group:write:administrator:admin
 - group:delete:administrator:admin
 

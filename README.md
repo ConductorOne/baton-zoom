@@ -22,7 +22,7 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 - user:read:list_users:admin
 - billing:read:plan_usage:admin (optional, used to surface purchased vs. consumed Licensed seat counts)
 
-Scopes for provisioning (grant/revoke)
+Scopes for provisioning (grant/revoke) and the `transfer_and_delete_user` action
 
 - role:write:member:admin
 - role:delete:member:admin
@@ -32,7 +32,7 @@ Scopes for provisioning (grant/revoke)
 - group:delete:administrator:admin
 - user:write:user:admin (create users)
 - user:update:user:admin (assign/revoke license tier via PATCH /v2/users/{userId})
-- user:delete:user:admin
+- user:delete:user:admin (delete users; also required for the transfer_and_delete_user action)
 
 3. Pro or higher [plan](https://zoom.us/pricing)
 4. Activate the App for Account ID, Client ID and Client Secret needed to use the API
