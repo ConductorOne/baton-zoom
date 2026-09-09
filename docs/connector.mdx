@@ -34,7 +34,7 @@ Invites represent pending Zoom user invitations and are transient — they disap
 
 The Zoom connector supports [automatic account provisioning](/product/admin/account-provisioning).
 
-The Zoom connector supports account deprovisioning (user deletion).
+The Zoom connector supports account deprovisioning. C1's Delete user task calls Zoom with `action=delete`, which permanently removes the user and their meetings, webinars, cloud recordings, and PMI. That is stricter than Zoom's API default of `disassociate`, which only unlinks the user from the account. To disassociate instead of delete, or to transfer ownership first, use the `transfer_and_delete_user` connector action.
 
 ### Connector actions
 

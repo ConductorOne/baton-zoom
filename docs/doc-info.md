@@ -21,7 +21,7 @@ Yes:
 
 | Resource     | Operations                                         | API surface                                                                                             |
 | ------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Users**    | **Create account**, **Delete user**, **`transfer_and_delete_user` action** | `POST /v2/users` (action=`create`); `DELETE /v2/users/{userId}` (optional `transfer_email` / `transfer_meeting` / `transfer_webinar` / `transfer_recording`) |
+| **Users**    | **Create account**, **Delete user**, **`transfer_and_delete_user` action** | `POST /v2/users` (action=`create`); `DELETE /v2/users/{userId}?action=delete` (permanent deletion; Zoom's default without `action` is `disassociate`). The `transfer_and_delete_user` action still lets the operator pick `disassociate` or `delete` and optional `transfer_email` / `transfer_meeting` / `transfer_webinar` / `transfer_recording`. |
 | **Groups**   | Add/Remove members, Add/Remove admins              | `POST /v2/groups/{groupId}/members`; `DELETE /v2/groups/{groupId}/members/{userId}`; same for `/admins` |
 | **Roles**    | Assign/Unassign role to a user                     | `POST /v2/roles/{roleId}/members`; `DELETE /v2/roles/{roleId}/members/{userId}`                         |
 | **Licenses** | Grant (assign a tier), Revoke (downgrade to Basic) | `PATCH /v2/users/{userId}` with body `{"type": N}`                                                      |

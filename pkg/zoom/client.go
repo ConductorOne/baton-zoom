@@ -227,10 +227,6 @@ func (c *Client) EnsureGroupMember(ctx context.Context, groupId, userId string) 
 // group:write:administrator:admin and, on the ambiguous path, group:read:administrator:admin.
 func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email string) (bool, annotations.Annotations, error) {
 	output := annotations.New()
-	if email == "" {
-		return false, output, uhttp.WrapErrors(codes.InvalidArgument, "group admin assignment requires the user's email")
-	}
-
 	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, adminsPath)
 	if err != nil {
 		return false, output, err
@@ -246,6 +242,7 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 	}
 
 	var token string
+	sawEmptyID := false
 	for {
 		admins, nextToken, annos, err := c.GetGroupAdmins(ctx, groupId, token)
 		output.Merge(annos...)
@@ -253,11 +250,20 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 			return false, output, err
 		}
 		for _, admin := range admins {
-			if admin.ID == userId || (admin.ID == "" && strings.EqualFold(admin.Email, email)) {
+			if admin.ID == userId {
 				return false, output, nil
+			}
+			if admin.ID == "" {
+				if email != "" && strings.EqualFold(admin.Email, email) {
+					return false, output, nil
+				}
+				sawEmptyID = true
 			}
 		}
 		if nextToken == "" {
+			if sawEmptyID && email == "" {
+				return false, output, uhttp.WrapErrors(codes.InvalidArgument, "group admin assignment requires the user's email")
+			}
 			return false, output, uhttp.WrapErrors(codes.FailedPrecondition, "zoom did not add the administrator to the group")
 		}
 		token = nextToken

@@ -168,7 +168,8 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	if slug == memberEntitlement {
 		err := g.client.DeleteGroupMember(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
-			if zoom.IsAPIError(err, http.StatusNotFound, zoom.GroupMemberNotFoundErrorCode) {
+			if zoom.IsAPIError(err, http.StatusNotFound, zoom.GroupMemberNotFoundErrorCode) ||
+				zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 				return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 			}
 			return nil, fmt.Errorf("baton-zoom: failed to remove group member: %w", err)

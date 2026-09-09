@@ -75,6 +75,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -249,8 +250,8 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 	entitlement := g.Entitlement
 	principal := g.Principal
 
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, fmt.Errorf("baton-zoom: only users can have a license revoked (got %q)", principal.Id.ResourceType)
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can have a license revoked"); err != nil {
+		return nil, err
 	}
 
 	grantedType, err := parseLicenseType(entitlement.Resource.Id.Resource)
@@ -260,6 +261,9 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 
 	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+		}
 		return nil, fmt.Errorf("baton-zoom: failed to get user before revoking license: %w", err)
 	}
 

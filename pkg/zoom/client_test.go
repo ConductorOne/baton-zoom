@@ -249,20 +249,33 @@ func TestEnsureGroupAdminConfirmationIdentity(t *testing.T) {
 	tests := []struct {
 		name     string
 		admin    string
+		email    string
 		wantCode codes.Code
 	}{
 		{
 			name:     "mismatched non-empty ID does not fall back to matching email",
 			admin:    `{"id":"different-user","email":"user-id@example.com","name":"User"}`,
+			email:    "user-id@example.com",
 			wantCode: codes.FailedPrecondition,
 		},
 		{
 			name:  "matching ID confirms assignment",
 			admin: `{"id":"user-id","email":"different@example.com","name":"User"}`,
+			email: "user-id@example.com",
+		},
+		{
+			name:  "matching ID confirms assignment without email",
+			admin: `{"id":"user-id","email":"different@example.com","name":"User"}`,
 		},
 		{
 			name:  "missing ID falls back to matching email",
 			admin: `{"email":"User-ID@example.com","name":"User"}`,
+			email: "user-id@example.com",
+		},
+		{
+			name:     "missing ID without email cannot confirm assignment",
+			admin:    `{"email":"User-ID@example.com","name":"User"}`,
+			wantCode: codes.InvalidArgument,
 		},
 	}
 
@@ -285,7 +298,7 @@ func TestEnsureGroupAdminConfirmationIdentity(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(t.Context(), "group-id", "user-id", "user-id@example.com")
+			created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(t.Context(), "group-id", "user-id", tt.email)
 			if tt.wantCode != codes.OK {
 				require.Error(t, err)
 				assert.Equal(t, tt.wantCode, status.Code(err))

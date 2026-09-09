@@ -51,7 +51,7 @@ func userResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resourc
 		userTraitTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
-		resource.WithResourceStatus(v2.Status_ResourceStatus(userTraitStatus(user.Status)), ""),
+		resource.WithResourceStatus(userTraitStatus(user.Status), ""),
 	)
 	if err != nil {
 		return nil, err

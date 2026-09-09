@@ -12,6 +12,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -34,16 +35,16 @@ const (
 	contactMemberTypeUser = 1
 )
 
-func userTraitStatus(status string) v2.UserTrait_Status_Status {
+func userTraitStatus(status string) v2.Status_ResourceStatus {
 	switch status {
 	case userStatusActive:
-		return v2.UserTrait_Status_STATUS_ENABLED
+		return v2.Status_RESOURCE_STATUS_ENABLED
 	case userStatusInactive:
-		return v2.UserTrait_Status_STATUS_DISABLED
+		return v2.Status_RESOURCE_STATUS_DISABLED
 	case userStatusPending:
-		return v2.UserTrait_Status_STATUS_PENDING
+		return v2.Status_RESOURCE_STATUS_PENDING
 	default:
-		return v2.UserTrait_Status_STATUS_UNSPECIFIED
+		return v2.Status_RESOURCE_STATUS_UNSPECIFIED
 	}
 }
 
@@ -90,7 +91,7 @@ func requireUserPrincipal(ctx context.Context, principal *v2.Resource, message s
 		zap.String("principal_type", principal.Id.ResourceType),
 		zap.String("principal_id", principal.Id.Resource),
 	)
-	return fmt.Errorf("%s", message)
+	return status.Error(codes.InvalidArgument, message)
 }
 
 func groupEntitlementSlug(entitlementID string) (string, error) {
