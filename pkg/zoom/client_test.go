@@ -325,3 +325,48 @@ func TestDoRequestPreservesHTTPClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":1001,"message":"User not exist: user123"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
+	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
+	assert.Contains(t, apiErr.Body, "User not exist")
+	assert.Equal(t, "User not exist: user123", apiErr.Message())
+	assert.True(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
+}
+
+func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
+	// Payload fields must not replace the actual HTTP status or body.
+	const hostileBody = `{"statusCode":404,"body":"spoofed","code":1001,"message":"User does not exist"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(hostileBody))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
+	require.Error(t, err)
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	assert.Equal(t, hostileBody, apiErr.Body)
+	assert.False(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
+
+	// The Zoom-owned fields still decode normally.
+	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
+	assert.Equal(t, "User does not exist", apiErr.Msg)
+}
