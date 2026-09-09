@@ -58,6 +58,27 @@ func TestRoleEntitlementIsMutuallyExclusive(t *testing.T) {
 	assert.Equal(t, roleExclusionGroup, exclusionGroup.GetExclusionGroupId())
 }
 
+func TestRoleGrantsAreEmittedFromUsers(t *testing.T) {
+	builder := roleBuilder(nil)
+	role := v2.Resource_builder{
+		Id: v2.ResourceId_builder{
+			ResourceType: resourceTypeRole.Id,
+			Resource:     "role-1",
+		}.Build(),
+	}.Build()
+
+	grants, results, err := builder.Grants(t.Context(), role, resource.SyncOpAttrs{})
+	require.NoError(t, err)
+	assert.Empty(t, grants)
+	assert.Nil(t, results)
+
+	skipGrants := &v2.SkipGrants{}
+	resourceTypeAnnos := annotations.Annotations(builder.ResourceType(t.Context()).GetAnnotations())
+	ok, err := resourceTypeAnnos.Pick(skipGrants)
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
 func TestRoleGrantReturnsRequestedGrant(t *testing.T) {
 	tests := []struct {
 		name              string

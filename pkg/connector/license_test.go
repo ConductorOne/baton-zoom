@@ -12,6 +12,8 @@ import (
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func licenseProvisioningObjects(licenseType zoom.UserType) (*v2.Resource, *v2.Entitlement) {
@@ -131,4 +133,35 @@ func TestLicenseGrantReplacesPreviousTier(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "license:1:assigned:user:user-1", replaced.GetReplacedGrantId())
+}
+
+func TestLicenseProvisioningRejectsUnknownTier(t *testing.T) {
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+
+	principal, entitlement := licenseProvisioningObjects(zoom.UserType(99))
+	builder := licenseBuilder(newZoomTestClient(t, srv.Client(), srv.URL))
+
+	t.Run("grant", func(t *testing.T) {
+		_, _, err := builder.Grant(t.Context(), principal, entitlement)
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Contains(t, err.Error(), `baton-zoom: unknown license resource id "99"`)
+	})
+
+	t.Run("revoke", func(t *testing.T) {
+		_, err := builder.Revoke(t.Context(), &v2.Grant{
+			Principal:   principal,
+			Entitlement: entitlement,
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.Contains(t, err.Error(), `baton-zoom: unknown license resource id "99"`)
+	})
+
+	assert.Zero(t, requestCount)
 }

@@ -7,7 +7,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -41,14 +40,14 @@ func groupResource(group *zoom.Group, parentResourceID *v2.ResourceId) (*v2.Reso
 }
 
 func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id}, "list groups")
 	if err != nil {
 		return nil, nil, err
 	}
 
 	groups, nextToken, annos, err := g.client.GetGroups(ctx, page)
 	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list groups: %w", err)
 	}
 
 	pageToken, err := nextBagToken(bag, nextToken)
@@ -82,74 +81,38 @@ func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ re
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	b := &pagination.Bag{}
-	err := b.Unmarshal(opts.PageToken.Token)
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{
+		ResourceType: resourceTypeGroup.Id,
+		Resource:     r.Id.Resource,
+	}, "list group administrators")
 	if err != nil {
 		return nil, nil, err
 	}
-	if b.Current() == nil {
-		b.Push(pagination.PageState{ResourceTypeID: memberEntitlement})
+
+	admins, nextToken, annos, err := g.client.GetGroupAdmins(ctx, r.Id.Resource, page)
+	if err != nil {
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf(
+			"baton-zoom: list administrators for group %s: %w",
+			r.Id.Resource,
+			err,
+		)
 	}
 
-	current := b.Current()
-	switch current.ResourceTypeID {
-	case memberEntitlement:
-		members, nextToken, annos, err := g.client.GetGroupMembers(ctx, r.Id.Resource, current.Token)
-		if err != nil {
-			return nil, nil, err
-		}
-		rv := make([]*v2.Grant, 0, len(members))
-		for _, member := range members {
-			ur, err := userResource(member, r.Id)
-			if err != nil {
-				return nil, nil, err
-			}
-			rv = append(rv, grant.NewGrant(r, memberEntitlement, ur.Id))
-		}
-		if nextToken != "" {
-			err = b.Next(nextToken)
-		} else {
-			b.Pop()
-			b.Push(pagination.PageState{ResourceTypeID: adminEntitlement})
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		pageToken, err := b.Marshal()
-		if err != nil {
-			return nil, nil, err
-		}
-		return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
-
-	case adminEntitlement:
-		admins, nextToken, annos, err := g.client.GetGroupAdmins(ctx, r.Id.Resource, current.Token)
-		if err != nil {
-			return nil, nil, err
-		}
-		rv := make([]*v2.Grant, 0, len(admins))
-		for _, admin := range admins {
-			ur, err := userResource(admin, r.Id)
-			if err != nil {
-				return nil, nil, err
-			}
-			rv = append(rv, grant.NewGrant(r, adminEntitlement, ur.Id))
-		}
-		if nextToken != "" {
-			err = b.Next(nextToken)
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			b.Pop()
-		}
-		pageToken, err := b.Marshal()
-		if err != nil {
-			return nil, nil, err
-		}
-		return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
+	pageToken, err := nextBagToken(bag, nextToken)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return nil, &resource.SyncOpResults{}, nil
+	rv := make([]*v2.Grant, 0, len(admins))
+	for _, admin := range admins {
+		ur, err := userResource(admin, r.Id)
+		if err != nil {
+			return nil, nil, err
+		}
+		rv = append(rv, grant.NewGrant(r, adminEntitlement, ur.Id))
+	}
+
+	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {

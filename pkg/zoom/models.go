@@ -93,11 +93,6 @@ type contactGroupsResponse struct {
 	Groups []*ContactGroup `json:"groups"`
 }
 
-type membersResponse struct {
-	PaginationData
-	Members []*User `json:"members"`
-}
-
 type adminsResponse struct {
 	PaginationData
 	Admins []*User `json:"admins"`

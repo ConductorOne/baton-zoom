@@ -1,11 +1,14 @@
 package connector
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +44,25 @@ func groupProvisioningObjects(t *testing.T, slug string) (*v2.Resource, *v2.Enti
 	return principal, entitlement, grant
 }
 
+func TestGroupListPageTokenValidation(t *testing.T) {
+	builder := &groupResourceType{}
+
+	_, _, err := builder.List(t.Context(), nil, resource.SyncOpAttrs{
+		PageToken: pagination.Token{Token: "{"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, err.Error(), "baton-zoom: list groups: invalid page token")
+
+	var syntaxErr *json.SyntaxError
+	assert.True(t, errors.As(err, &syntaxErr))
+
+	bag, page, err := parsePageToken("", &v2.ResourceId{ResourceType: resourceTypeGroup.Id}, "list groups")
+	require.NoError(t, err)
+	require.NotNil(t, bag)
+	assert.Empty(t, page)
+}
+
 func TestGroupGrantReturnsRequestedGrant(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -74,6 +96,55 @@ func TestGroupGrantReturnsRequestedGrant(t *testing.T) {
 			assert.Equal(t, principal.GetId(), grants[0].GetPrincipal().GetId())
 		})
 	}
+}
+
+func TestGroupGrantsEmitOnlyAdminsWithPagination(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/groups/group-1/admins", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("next_page_token") {
+		case "":
+			_, err := w.Write([]byte(`{"admins":[{"id":"admin-1","email":"admin-1@example.com"}],"next_page_token":"page-2"}`))
+			require.NoError(t, err)
+		case "page-2":
+			_, err := w.Write([]byte(`{"admins":[{"id":"admin-2","email":"admin-2@example.com"}],"next_page_token":""}`))
+			require.NoError(t, err)
+		default:
+			t.Errorf("unexpected next_page_token %q", r.URL.Query().Get("next_page_token"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	group := v2.Resource_builder{
+		Id: v2.ResourceId_builder{
+			ResourceType: resourceTypeGroup.Id,
+			Resource:     "group-1",
+		}.Build(),
+		DisplayName: "Group 1",
+	}.Build()
+	builder := groupBuilder(newZoomTestClient(t, srv.Client(), srv.URL))
+
+	first, firstResults, err := builder.Grants(t.Context(), group, resource.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	assert.Equal(t, "group:group-1:admin:user:admin-1", first[0].GetId())
+	assert.Equal(t, "group:group-1:admin", first[0].GetEntitlement().GetId())
+	assert.Equal(t, "user:admin-1", first[0].GetPrincipal().GetId().GetResourceType()+":"+first[0].GetPrincipal().GetId().GetResource())
+	require.NotEmpty(t, firstResults.NextPageToken)
+
+	second, secondResults, err := builder.Grants(t.Context(), group, resource.SyncOpAttrs{
+		PageToken: pagination.Token{Token: firstResults.NextPageToken},
+	})
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, "group:group-1:admin:user:admin-2", second[0].GetId())
+	assert.Equal(t, "group:group-1:admin", second[0].GetEntitlement().GetId())
+	assert.Equal(t, "user:admin-2", second[0].GetPrincipal().GetId().GetResourceType()+":"+second[0].GetPrincipal().GetId().GetResource())
+	assert.Empty(t, secondResults.NextPageToken)
+	assert.Equal(t, 2, requests)
 }
 
 // Zoom returns the same 201 with an empty ids field whether the user was

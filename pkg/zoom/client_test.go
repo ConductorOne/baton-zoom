@@ -343,25 +343,57 @@ func TestEnsureGroupMemberResolvesAmbiguousCreate(t *testing.T) {
 	}
 }
 
-func TestEnsureGroupAdminMatchesDocumentedEmail(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method {
-		case http.MethodPost:
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"ids":""}`))
-		case http.MethodGet:
-			assert.Equal(t, "/groups/group-id/admins", r.URL.Path)
-			_, _ = w.Write([]byte(`{"admins":[{"email":"User-ID@example.com","name":"User"}],"next_page_token":""}`))
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
+func TestEnsureGroupAdminConfirmationIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		admin    string
+		wantCode codes.Code
+	}{
+		{
+			name:     "mismatched non-empty ID does not fall back to matching email",
+			admin:    `{"id":"different-user","email":"user-id@example.com","name":"User"}`,
+			wantCode: codes.FailedPrecondition,
+		},
+		{
+			name:  "matching ID confirms assignment",
+			admin: `{"id":"user-id","email":"different@example.com","name":"User"}`,
+		},
+		{
+			name:  "missing ID falls back to matching email",
+			admin: `{"email":"User-ID@example.com","name":"User"}`,
+		},
+	}
 
-	created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(t.Context(), "group-id", "user-id", "user-id@example.com")
-	require.NoError(t, err)
-	assert.False(t, created)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adminReads := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method {
+				case http.MethodPost:
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"ids":""}`))
+				case http.MethodGet:
+					adminReads++
+					assert.Equal(t, "/groups/group-id/admins", r.URL.Path)
+					_, _ = w.Write([]byte(`{"admins":[` + tt.admin + `],"next_page_token":""}`))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(t.Context(), "group-id", "user-id", "user-id@example.com")
+			if tt.wantCode != codes.OK {
+				require.Error(t, err)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+			} else {
+				require.NoError(t, err)
+				assert.False(t, created)
+			}
+			assert.Equal(t, 1, adminReads)
+		})
+	}
 }
 
 func TestDoRequestClosesTransportBodyExactlyOnce(t *testing.T) {

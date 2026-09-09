@@ -8,8 +8,10 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -45,11 +47,15 @@ func userTraitStatus(status string) v2.UserTrait_Status_Status {
 	}
 }
 
-func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, string, error) {
+func parsePageToken(i string, resourceID *v2.ResourceId, operation string) (*pagination.Bag, string, error) {
 	b := &pagination.Bag{}
 	err := b.Unmarshal(i)
 	if err != nil {
-		return nil, "", err
+		return nil, "", uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: %s: invalid page token", operation),
+			err,
+		)
 	}
 	if b.Current() == nil {
 		b.Push(pagination.PageState{
@@ -58,6 +64,14 @@ func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, strin
 		})
 	}
 	return b, b.PageToken(), nil
+}
+
+func willSyncResourceType(syncResourceTypes map[string]struct{}, resourceTypeID string) bool {
+	if len(syncResourceTypes) == 0 {
+		return true
+	}
+	_, ok := syncResourceTypes[resourceTypeID]
+	return ok
 }
 
 func nextBagToken(bag *pagination.Bag, nextToken string) (string, error) {

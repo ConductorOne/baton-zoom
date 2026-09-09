@@ -29,14 +29,9 @@ func main() {
 }
 
 func getConnector(ctx context.Context, cfg *config.Zoom, opts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
-	// License grants are emitted from the user syncer (Zoom has no /licenses
-	// endpoint), so the user builder needs to know whether the customer's sync
-	// filter includes the license resource type. WillSyncResourceType returns
-	// true when licenses are explicitly selected or when no filter is set at
-	// all (e.g. local CLI runs).
-	syncLicenses := true
+	var syncResourceTypes map[string]struct{}
 	if opts != nil {
-		syncLicenses = opts.WillSyncResourceType(connector.LicenseResourceTypeID)
+		syncResourceTypes = opts.SyncResourceTypeSet()
 	}
 
 	cb, err := connector.New(
@@ -46,7 +41,7 @@ func getConnector(ctx context.Context, cfg *config.Zoom, opts *cli.ConnectorOpts
 		cfg.ZoomClientSecret,
 		cfg.SyncInactiveUsers,
 		cfg.BaseUrl,
-		syncLicenses,
+		syncResourceTypes,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("baton-zoom: error creating connector: %w", err)

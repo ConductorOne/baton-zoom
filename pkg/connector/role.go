@@ -43,7 +43,7 @@ func roleResource(role *zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resourc
 func (r *roleResourceType) List(ctx context.Context, parentId *v2.ResourceId, _ resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	roles, annos, err := r.client.GetRoles(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list roles: %w", err)
 	}
 
 	rv := make([]*v2.Resource, 0, len(roles))
@@ -70,32 +70,8 @@ func (r *roleResourceType) Entitlements(_ context.Context, res *v2.Resource, _ r
 	}, &resource.SyncOpResults{}, nil
 }
 
-func (r *roleResourceType) Grants(ctx context.Context, res *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeRole.Id})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	roleMembers, nextToken, annos, err := r.client.GetRoleMembers(ctx, res.Id.Resource, page)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pageToken, err := nextBagToken(bag, nextToken)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	rv := make([]*v2.Grant, 0, len(roleMembers))
-	for _, user := range roleMembers {
-		ur, err := userResource(user, res.Id)
-		if err != nil {
-			return nil, nil, err
-		}
-		rv = append(rv, grant.NewGrant(res, memberEntitlement, ur.Id))
-	}
-
-	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
+func (r *roleResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
 func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {

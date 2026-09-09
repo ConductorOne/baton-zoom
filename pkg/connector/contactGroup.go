@@ -12,8 +12,9 @@ import (
 )
 
 type contactGroupResourceType struct {
-	resourceType *v2.ResourceType
-	client       *zoom.Client
+	resourceType      *v2.ResourceType
+	client            *zoom.Client
+	syncResourceTypes map[string]struct{}
 }
 
 func (g *contactGroupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -43,14 +44,14 @@ func contactGroupResource(group *zoom.ContactGroup, parentResourceID *v2.Resourc
 }
 
 func (g *contactGroupResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id}, "list contact groups")
 	if err != nil {
 		return nil, nil, err
 	}
 
 	groups, nextToken, annos, err := g.client.GetContactGroups(ctx, page)
 	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list contact groups: %w", err)
 	}
 
 	pageToken, err := nextBagToken(bag, nextToken)
@@ -81,14 +82,18 @@ func (g *contactGroupResourceType) Entitlements(_ context.Context, r *v2.Resourc
 }
 
 func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id})
+	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeContactGroup.Id}, "list contact group members")
 	if err != nil {
 		return nil, nil, err
 	}
 
 	groupMembers, nextToken, annos, err := g.client.GetContactGroupMembers(ctx, r.Id.Resource, page)
 	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf(
+			"baton-zoom: list members for contact group %s: %w",
+			r.Id.Resource,
+			err,
+		)
 	}
 
 	pageToken, err := nextBagToken(bag, nextToken)
@@ -99,6 +104,9 @@ func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, o
 	rv := make([]*v2.Grant, 0, len(groupMembers))
 	for _, member := range groupMembers {
 		if member.Type == contactMemberTypeUser {
+			if !willSyncResourceType(g.syncResourceTypes, resourceTypeUser.Id) {
+				continue
+			}
 			ur, err := userResource(&zoom.User{
 				ID:          member.ID,
 				DisplayName: member.Name,
@@ -110,6 +118,9 @@ func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, o
 			continue
 		}
 
+		if !willSyncResourceType(g.syncResourceTypes, resourceTypeGroup.Id) {
+			continue
+		}
 		gr, err := groupResource(&zoom.Group{
 			ID:   member.ID,
 			Name: member.Name,
@@ -135,9 +146,10 @@ func (g *contactGroupResourceType) Grants(ctx context.Context, r *v2.Resource, o
 	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
-func contactGroupBuilder(client *zoom.Client) *contactGroupResourceType {
+func contactGroupBuilder(client *zoom.Client, syncResourceTypes map[string]struct{}) *contactGroupResourceType {
 	return &contactGroupResourceType{
-		resourceType: resourceTypeContactGroup,
-		client:       client,
+		resourceType:      resourceTypeContactGroup,
+		client:            client,
+		syncResourceTypes: syncResourceTypes,
 	}
 }

@@ -141,21 +141,6 @@ func (c *Client) GetRoles(ctx context.Context) ([]*Role, annotations.Annotations
 	return res.Roles, annos, nil
 }
 
-// GetGroupMembers returns one page from GET /v2/groups/{groupId}/members.
-// Required scope: group:read:list_members:admin.
-func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
-	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, membersPath)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	res := &membersResponse{}
-	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
-	if err != nil {
-		return nil, "", annos, err
-	}
-	return res.Members, res.NextPageToken, annos, nil
-}
-
 // GetGroupAdmins returns one page from GET /v2/groups/{groupId}/admins.
 // Required scope: group:read:administrator:admin.
 func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
@@ -179,21 +164,6 @@ func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nex
 		return nil, "", nil, err
 	}
 	res := &contactGroupMembersResponse{}
-	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
-	if err != nil {
-		return nil, "", annos, err
-	}
-	return res.Members, res.NextPageToken, annos, nil
-}
-
-// GetRoleMembers returns one page from GET /v2/roles/{roleId}/members.
-// Required scope: role:read:list_members:admin.
-func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
-	endpoint, err := buildEndpoint(c.baseURL, rolesPath, roleId, membersPath)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	res := &membersResponse{}
 	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
 	if err != nil {
 		return nil, "", annos, err
@@ -251,8 +221,9 @@ func (c *Client) EnsureGroupMember(ctx context.Context, groupId, userId string) 
 }
 
 // EnsureGroupAdmin POSTs the user as a group administrator and returns whether
-// Zoom newly created the assignment. Confirmation matches the documented admin
-// email when ids does not echo the posted user. Required scopes:
+// Zoom newly created the assignment. Confirmation uses the canonical user ID
+// when present and falls back to the documented admin email when the payload
+// omits the ID. Required scopes:
 // group:write:administrator:admin and, on the ambiguous path, group:read:administrator:admin.
 func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email string) (bool, annotations.Annotations, error) {
 	output := annotations.New()
@@ -282,7 +253,7 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 			return false, output, err
 		}
 		for _, admin := range admins {
-			if admin.ID == userId || strings.EqualFold(admin.Email, email) {
+			if admin.ID == userId || (admin.ID == "" && strings.EqualFold(admin.Email, email)) {
 				return false, output, nil
 			}
 		}

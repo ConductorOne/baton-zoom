@@ -1,6 +1,6 @@
 # baton-zoom
 
-`baton-zoom` is a connector for Zoom built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the Zoom API to sync data about users, groups, roles and license tiers.
+`baton-zoom` is a connector for Zoom built using the [Baton SDK](https://github.com/conductorone/baton-sdk). It communicates with the Zoom API to sync users, groups, roles, contact groups, invites, and license tiers.
 
 Check out [Baton](https://github.com/conductorone/baton) to learn more the project in general.
 
@@ -14,10 +14,8 @@ Check out [Baton](https://github.com/conductorone/baton) to learn more the proje
 - contact_group:read:list_groups:admin
 - contact_group:read:list_members:admin
 - group:read:list_groups:admin
-- group:read:list_members:admin
 - group:read:administrator:admin
 - role:read:list_roles:admin
-- role:read:list_members:admin
 - user:read:user:admin
 - user:read:list_users:admin
 - billing:read:plan_usage:admin (optional, used to surface purchased vs. consumed Licensed seat counts)
@@ -62,7 +60,7 @@ baton resources
 ## docker
 
 ```
-docker run --rm -v $(pwd):/out -e BATON_ZOOM_CLIENT_ID=clientId BATON_ZOOM_CLIENT_SECRET=clientSecret BATON_ACCOUNT_ID=accountId ghcr.io/conductorone/baton-zoom:latest -f "/out/sync.c1z"
+docker run --rm -v "$(pwd):/out" -e BATON_ZOOM_CLIENT_ID=clientId -e BATON_ZOOM_CLIENT_SECRET=clientSecret -e BATON_ACCOUNT_ID=accountId public.ecr.aws/conductorone/baton-zoom:latest -f "/out/sync.c1z"
 docker run --rm -v $(pwd):/out ghcr.io/conductorone/baton:latest -f "/out/sync.c1z" resources
 ```
 
@@ -78,14 +76,16 @@ baton resources
 
 # Data Model
 
-`baton-zoom` pulls down information about the following Zoom resources:
+`baton-zoom` syncs the following Zoom resources:
 
-- Users
-- Invites (pending users)
-- Groups
-- Contact Groups
-- Roles
-- Licenses (Basic / Licensed / Unassigned)
+- **Users** — `GET /v2/users`, plus `GET /v2/users/{userId}` during grant emission. The C1 profile retains the Zoom license `type`; group membership, role assignment, and license grants come from `group_ids`, `role_id`, and `type` returned by the per-user request.
+- **Invites** — pending users (`GET /v2/users?status=pending`).
+- **Groups** — `GET /v2/groups`. Member grants come from user `group_ids`. Admin grants come from `GET /v2/groups/{groupId}/admins`.
+- **Contact Groups** — `GET /v2/contacts/groups` and `GET /v2/contacts/groups/{id}/members` (read-only).
+- **Roles** — `GET /v2/roles`. Membership grants come from each user's `role_id`.
+- **Licenses** — static Basic / Licensed / Unassigned tiers from `User.type`. Seat counts use `GET /v2/accounts/me/plans/usage` when the billing scope is present.
+
+Grant emission for groups, roles, and licenses is skipped when that resource type is excluded from `--sync-resource-types`. See [`docs/doc-info.md`](docs/doc-info.md) for endpoints and filter semantics. Customer setup: [`docs/connector.mdx`](docs/connector.mdx).
 
 # Contributing, Support, and Issues
 

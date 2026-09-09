@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -49,7 +50,7 @@ func inviteResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resou
 func (i *inviteResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	users, nextPage, annos, err := i.client.GetUsers(ctx, opts.PageToken.Token, userStatusPending)
 	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list pending invitations: %w", err)
 	}
 
 	rv := make([]*v2.Resource, 0, len(users))

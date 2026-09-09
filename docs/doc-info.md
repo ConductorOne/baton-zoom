@@ -8,12 +8,12 @@ While developing the connector, please fill out this form. This information is n
 
 | Resource           | Trait                   | Notes                                                                                                                                                                                                                                        |
 | ------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Users**          | `TRAIT_USER`            | Active users; inactive users included when `--sync-inactive-users` is set.                                                                                                                                                                   |
-| **Invites**        | `TRAIT_USER`            | Pending users (Zoom users with `status=pending`). No native ID yet — synced as a separate type.                                                                                                                                              |
-| **Groups**         | `TRAIT_GROUP`           | Zoom Groups with both members and admins as principals.                                                                                                                                                                                      |
-| **Contact Groups** | `TRAIT_GROUP`           | Read-only. Membership includes both users and nested user-groups.                                                                                                                                                                            |
-| **Roles**          | `TRAIT_ROLE`            | A user can hold one role at a time; emits a `member` entitlement.                                                                                                                                                                            |
-| **Licenses**       | `TRAIT_LICENSE_PROFILE` | Static set of 3 tiers: Basic (`1`), Licensed (`2`), Unassigned (`4`). Each emits an `assigned` entitlement. Purchased / consumed seat counts are populated for the **Licensed** tier when the `billing:read:plan_usage:admin` scope is granted. |
+| **Users**          | `TRAIT_USER`            | `GET /v2/users`. Inactive users included when `--sync-inactive-users` is set. The existing `type` profile field is preserved; `GET /v2/users/{userId}` supplies `group_ids`, `role_id`, and `type` for grant emission.                     |
+| **Invites**        | `TRAIT_USER`            | Pending users (`status=pending`). No native ID yet — synced as a separate type.                                                                                                                                                              |
+| **Groups**         | `TRAIT_GROUP`           | `GET /v2/groups`. Member grants come from each user's `group_ids`. Admin grants come from `GET /v2/groups/{groupId}/admins`. Both entitlements remain provisionable.                                                                         |
+| **Contact Groups** | `TRAIT_GROUP`           | Read-only. Membership includes both users and nested user-groups (`GET /v2/contacts/groups/{id}/members`).                                                                                                                                   |
+| **Roles**          | `TRAIT_ROLE`            | `GET /v2/roles`. A user holds one `role_id`. Membership grants are emitted from the user side; role-side `Grants()` is a no-op (`SkipGrants`). Assign/unassign still uses `POST`/`DELETE /v2/roles/{roleId}/members`.                        |
+| **Licenses**       | `TRAIT_LICENSE_PROFILE` | Static tiers Basic (`1`), Licensed (`2`), Unassigned (`4`). Grants come from the user's `type`. Seat counts on Licensed require `billing:read:plan_usage:admin`.                                                                             |
 
 ### 2. Can the connector provision any resources? If so, which ones?
 
@@ -29,6 +29,34 @@ Yes:
 **License Revoke semantics:** Zoom has no "no license" state — Basic is the floor and does not consume a seat. Revoking the **Licensed** or **Unassigned** tier downgrades the user back to Basic, freeing the seat. Revoking a **Basic** grant is a logical no-op (returns `GrantAlreadyRevoked` without an API call).
 
 Contact Groups are intentionally **read-only** (no membership write endpoints are exposed by Zoom's public API).
+
+### Grant emission
+
+Group, role and license memberships are emitted from the **principal** side:
+`GET /v2/users/{userId}` returns `group_ids`, `role_id` and `type` together, so
+one lookup per user covers all three and the group and role builders never
+rescan every member to invert the relationship. There is no user-side field for
+group **admin** status.
+
+| Grant | Emitted from | Zoom source | Sync filter |
+| ----- | ------------ | ----------- | ----------- |
+| Group `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `group_ids` | Emit only when the `group` resource type is selected |
+| Group `admin` | `groupBuilder.Grants` | `GET /v2/groups/{groupId}/admins` (paginated) | Group builder only runs when groups are synced |
+| Role `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `role_id` | Emit only when the `role` resource type is selected |
+| License `assigned` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `type` | Emit only when the `license` resource type is selected |
+| Contact group `member` | `contactGroupBuilder.Grants` | `GET /v2/contacts/groups/{id}/members` | Emit user principals only when `user` is selected and nested-group principals only when `group` is selected |
+
+Empty or nil `--sync-resource-types` means sync everything (same as before). An explicit filter must include the **target** type or the corresponding grants are omitted. When none of `group`, `role` or `license` is selected, `userBuilder.Grants` skips the per-user lookup altogether.
+
+`group:read:list_members:admin` and `role:read:list_members:admin` are not required. Provisioning still uses the member write/delete scopes.
+
+Official API references:
+
+- [List users](https://developers.zoom.us/docs/api/users/#tag/users/GET/users)
+- [Get a user](https://developers.zoom.us/docs/api/users/#tag/users/GET/users/{userId})
+- [List groups](https://developers.zoom.us/docs/api/groups/)
+- [List group admins](https://developers.zoom.us/docs/api/groups/#tag/groups/GET/groups/{groupId}/admins)
+- [List roles](https://developers.zoom.us/docs/api/roles/)
 
 ## Connector credentials
 
@@ -74,10 +102,8 @@ Minimum set required for read-only sync of all resource types:
 contact_group:read:list_groups:admin
 contact_group:read:list_members:admin
 group:read:list_groups:admin
-group:read:list_members:admin
 group:read:administrator:admin
 role:read:list_roles:admin
-role:read:list_members:admin
 user:read:user:admin
 user:read:list_users:admin
 ```
@@ -88,7 +114,7 @@ Optional (recommended) for license seat reporting:
 billing:read:plan_usage:admin
 ```
 
-> Without `billing:read:plan_usage:admin`, the `Licenses` resource type still syncs — it just omits the `purchased_seats` / `consumed_seats` fields on the Licensed tier. The connector logs a warning and continues.
+> Without `billing:read:plan_usage:admin`, the `Licenses` resource type still syncs — it just omits the `purchased_seats` / `consumed_seats` fields on the Licensed tier. The connector logs at debug and continues.
 
 #### Provisioning (read + write) scopes
 
