@@ -44,13 +44,18 @@ func New(
 		return nil, err
 	}
 
-	token, err := zoom.RequestAccessToken(ctx, accountId, clientId, clientSecret)
+	token, err := zoom.RequestAccessToken(ctx, accountId, clientId, clientSecret, "")
 	if err != nil {
-		return nil, fmt.Errorf("zoom-connector: failed to get token: %w", err)
+		return nil, fmt.Errorf("baton-zoom: failed to get token: %w", err)
+	}
+
+	zoomClient, err := zoom.NewClient(ctx, httpClient, token, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("baton-zoom: failed to create client: %w", err)
 	}
 
 	return &Zoom{
-		client:            zoom.NewClient(httpClient, token, baseURL),
+		client:            zoomClient,
 		syncInactiveUsers: syncInactiveUsers,
 		skipLicenseGrants: !syncLicenses,
 	}, nil
@@ -62,7 +67,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 		Description: "Connector syncing users, groups, roles, contact groups, and license tiers from Zoom to Baton.",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
-				"email": {
+				emailKey: {
 					DisplayName: "Email",
 					Required:    true,
 					Description: "This email will be used as the login for the user.",
@@ -92,7 +97,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 					Placeholder: "Doe",
 					Order:       3,
 				},
-				"display_name": {
+				displayNameKey: {
 					DisplayName: "Display Name",
 					Required:    true,
 					Description: "This is the name that will be displayed on the new account.",
@@ -108,15 +113,14 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 }
 
 func (z *Zoom) Validate(ctx context.Context) (annotations.Annotations, error) {
-	user, resp, err := z.client.GetUser(ctx, "me")
+	user, _, err := z.client.GetUser(ctx, "me")
 	if err != nil {
-		return nil, fmt.Errorf("zoom-connector: failed to get current user: %w", err)
+		return nil, fmt.Errorf("baton-zoom: failed to get current user: %w", err)
 	}
-	resp.Body.Close()
 
 	// all required scopes are for admins only
 	if user.RoleName == "member" {
-		return nil, fmt.Errorf("zoom-connector: user is not an admin")
+		return nil, fmt.Errorf("baton-zoom: user is not an admin")
 	}
 
 	return nil, nil

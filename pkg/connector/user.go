@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -12,14 +13,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
-)
-
-const (
-	// userTypeProfileKey carries the user's Zoom license tier (User.type) on
-	// the resource profile so userBuilder.Grants can emit the principal-side
-	// license grant without an extra GET /v2/users/{id} call.
-	userTypeProfileKey = "type"
 )
 
 type userResourceType struct {
@@ -33,24 +29,13 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 // Create a new connector resource for a Zoom user.
-func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func userResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]any{
 		firstNameKey:       user.FirstName,
 		lastNameKey:        user.LastName,
-		"login":            user.Email,
-		"user_id":          user.ID,
+		loginKey:           user.Email,
+		userIDKey:          user.ID,
 		userTypeProfileKey: int64(user.Type),
-	}
-
-	var userStatus v2.Status_ResourceStatus
-
-	switch user.Status {
-	case userStatusInactive:
-		userStatus = v2.Status_RESOURCE_STATUS_DISABLED
-	case userStatusActive:
-		userStatus = v2.Status_RESOURCE_STATUS_ENABLED
-	default:
-		userStatus = v2.Status_RESOURCE_STATUS_UNSPECIFIED
 	}
 
 	userTraitTraitOptions := []resource.UserTraitOption{
@@ -64,7 +49,7 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		userTraitTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
-		resource.WithResourceStatus(userStatus, ""),
+		resource.WithResourceStatus(v2.Status_ResourceStatus(userTraitStatus(user.Status)), ""),
 	)
 	if err != nil {
 		return nil, err
@@ -74,17 +59,12 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 }
 
 func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var rv []*v2.Resource
-
 	b := &pagination.Bag{}
 	err := b.Unmarshal(opts.PageToken.Token)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Initialize: push statuses in reverse order so active is processed first.
-	// Inactive users are only included when the flag is enabled.
-	// Pending users are omitted — they have no ID yet and are synced via the Invite resource type.
 	if b.Current() == nil {
 		if u.syncInactiveUsers {
 			b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusInactive})
@@ -92,37 +72,23 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 		b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusActive})
 	}
 
-	status := b.Current().ResourceID
-	page := b.PageToken()
-
-	users, nextPage, resp, err := u.client.GetUsers(ctx, page, status)
+	users, nextPage, annos, err := u.client.GetUsers(ctx, b.PageToken(), b.Current().ResourceID)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, nil, err
 	}
-	defer resp.Body.Close()
 
-	// Advance the bag: if no next page, pops the current status state; otherwise updates its token.
 	err = b.Next(nextPage)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	pageToken, err := b.Marshal()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
+	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		userCopy := user
-		ur, err := userResource(userCopy, parentId)
+		ur, err := userResource(user, parentId)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -213,15 +179,26 @@ func (u *userResourceType) CreateAccount(
 
 	newUser, err := u.client.CreateUser(ctx, newUserInfo)
 	if err != nil {
+		// The conflict already proves the account exists. Report it as such and
+		// let the next user sync correlate the resource.
+		if zoom.IsAPIError(err, http.StatusConflict, zoom.UserAlreadyExistsErrorCode) {
+			ctxzap.Extract(ctx).Debug(
+				"baton-zoom: account already exists in Zoom",
+				zap.String("email", newUserInfo.UserInfo.Email),
+			)
+			return &v2.CreateAccountResponse_AlreadyExistsResult{IsCreateAccountResult: true}, nil, nil, nil
+		}
 		return nil, nil, nil, err
 	}
 
-	userResource, err := userResource(zoom.User{
-		ID:        newUser.Id,
-		FirstName: newUser.FirstName,
-		LastName:  newUser.LastName,
-		Email:     newUser.Email,
-		Type:      newUser.Type,
+	userResource, err := userResource(&zoom.User{
+		ID:          newUser.Id,
+		FirstName:   newUser.FirstName,
+		LastName:    newUser.LastName,
+		Email:       newUser.Email,
+		Type:        newUser.Type,
+		DisplayName: newUserInfo.UserInfo.DisplayName,
+		Status:      userStatusPending,
 	}, nil)
 	if err != nil {
 		return nil, nil, nil, err
@@ -237,22 +214,22 @@ func (u *userResourceType) CreateAccount(
 func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, error) {
 	pMap := accountInfo.Profile.AsMap()
 
-	email, ok := pMap["email"].(string)
+	email, ok := pMap[emailKey].(string)
 	if !ok || email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
 
-	firstName, ok := pMap["first_name"].(string)
+	firstName, ok := pMap[firstNameKey].(string)
 	if !ok || firstName == "" {
 		return nil, fmt.Errorf("first name is required")
 	}
 
-	lastName, ok := pMap["last_name"].(string)
+	lastName, ok := pMap[lastNameKey].(string)
 	if !ok || lastName == "" {
 		return nil, fmt.Errorf("last name is required")
 	}
 
-	displayName, ok := pMap["display_name"].(string)
+	displayName, ok := pMap[displayNameKey].(string)
 	if !ok || displayName == "" {
 		return nil, fmt.Errorf("display name is required")
 	}
@@ -274,8 +251,11 @@ func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, err
 func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId) (annotations.Annotations, error) {
 	userID := principal.Resource
 
-	err := u.client.DeleteUser(ctx, userID)
+	err := u.client.DeleteUser(ctx, userID, zoom.DeleteUserOptions{Action: zoom.Delete})
 	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("baton-zoom: failed to delete user %s: %w", userID, err)
 	}
 

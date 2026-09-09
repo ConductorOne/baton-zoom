@@ -2,34 +2,62 @@ package zoom
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type countingReadCloser struct {
+	io.Reader
+	closeCount *int
+}
+
+func (c *countingReadCloser) Close() error {
+	*c.closeCount++
+	return nil
+}
+
+func newTestClient(t *testing.T, httpClient *http.Client, baseURL string) *Client {
+	t.Helper()
+	client, err := NewClient(t.Context(), httpClient, "test-token", baseURL)
+	require.NoError(t, err)
+	return client
+}
 
 func TestGetUser_TrailingSlashInBaseURL(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":"resolved"}`))
 	}))
 	defer srv.Close()
 
 	// url.JoinPath must normalize a trailing base URL slash.
-	client := NewClient(srv.Client(), "test-token", srv.URL+"/")
-	_, resp, err := client.GetUser(context.Background(), "abc123")
+	client := newTestClient(t, srv.Client(), srv.URL+"/")
+	_, _, err := client.GetUser(context.Background(), "abc123")
 	require.NoError(t, err)
-	_ = resp.Body.Close()
 
 	assert.Equal(t, "/users/abc123", gotPath)
 }
 
-func TestDeleteUserWithTransfer_QueryParams(t *testing.T) {
+func TestDeleteUser_QueryParams(t *testing.T) {
 	tests := []struct {
 		name      string
 		opts      DeleteUserOptions
@@ -75,26 +103,12 @@ func TestDeleteUserWithTransfer_QueryParams(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			client := NewClient(srv.Client(), "test-token", srv.URL)
-			err := client.DeleteUserWithTransfer(context.Background(), "user123", tt.opts)
+			client := newTestClient(t, srv.Client(), srv.URL)
+			err := client.DeleteUser(context.Background(), "user123", tt.opts)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantQuery, gotQuery)
 		})
 	}
-}
-
-func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.Query()
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	err := client.DeleteUser(context.Background(), "user123")
-	require.NoError(t, err)
-	assert.Empty(t, gotQuery)
 }
 
 func TestGetUser_EscapesQuerySeparatorInID(t *testing.T) {
@@ -104,15 +118,15 @@ func TestGetUser_EscapesQuerySeparatorInID(t *testing.T) {
 		gotPath = r.URL.Path
 		gotRawQuery = r.URL.RawQuery
 		gotEscapedPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":"resolved"}`))
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	_, resp, err := client.GetUser(context.Background(), id)
+	client := newTestClient(t, srv.Client(), srv.URL)
+	_, _, err := client.GetUser(context.Background(), id)
 	require.NoError(t, err)
-	_ = resp.Body.Close()
 
 	// EscapedPath and RawQuery verify that "?" remains part of the ID.
 	assert.Empty(t, gotRawQuery)
@@ -127,16 +141,18 @@ func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	err := client.DeleteUser(context.Background(), "user123")
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
 	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
 
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
 	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
 	assert.Contains(t, apiErr.Body, "User not exist")
-	assert.True(t, IsUserNotFound(err))
+	assert.Equal(t, "User not exist: user123", apiErr.Message())
+	assert.True(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
 }
 
 func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
@@ -148,19 +164,19 @@ func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	err := client.DeleteUser(context.Background(), "user123")
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
 	require.Error(t, err)
 
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
 	assert.Equal(t, hostileBody, apiErr.Body)
-	assert.False(t, IsUserNotFound(err))
+	assert.False(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
 
 	// The Zoom-owned fields still decode normally.
 	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
-	assert.Equal(t, "User does not exist", apiErr.Message)
+	assert.Equal(t, "User does not exist", apiErr.Msg)
 }
 
 func TestDoRequest_Generic404IsNotUserNotFound(t *testing.T) {
@@ -170,12 +186,276 @@ func TestDoRequest_Generic404IsNotUserNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.Client(), "test-token", srv.URL)
-	err := client.DeleteUser(context.Background(), "user123")
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
 	require.Error(t, err)
 
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
 	assert.Zero(t, apiErr.Code)
-	assert.False(t, IsUserNotFound(err))
+	assert.False(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
+}
+
+func TestNewClientRejectsInvalidBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		message string
+	}{
+		{name: "missing scheme", baseURL: "api.zoom.us/v2", message: "must use http or https"},
+		{name: "missing host", baseURL: "https:///v2", message: "missing a host"},
+		{name: "invalid escape", baseURL: "https://api.zoom.us/%zz", message: "is not valid"},
+		{name: "query", baseURL: "https://api.zoom.us/v2?tenant=other", message: "must not include a query or fragment"},
+		{name: "fragment", baseURL: "https://api.zoom.us/v2#other", message: "must not include a query or fragment"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClient(t.Context(), http.DefaultClient, "test-token", tt.baseURL)
+			require.ErrorContains(t, err, tt.message)
+			assert.Nil(t, client)
+		})
+	}
+}
+
+func TestDoRequestDisablesGETCache(t *testing.T) {
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"user123"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	for range 2 {
+		_, _, err := client.GetUser(t.Context(), "user123")
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 2, requestCount)
+}
+
+func TestDoRequestAnnotatesRateLimitOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-RateLimit-Limit", "100")
+		w.Header().Set("X-RateLimit-Remaining", "37")
+		_, _ = w.Write([]byte(`{"id":"user123"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	_, annos, err := client.GetUser(t.Context(), "user123")
+	require.NoError(t, err)
+
+	description := &v2.RateLimitDescription{}
+	found, err := annos.Pick(description)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(100), description.GetLimit())
+	assert.Equal(t, int64(37), description.GetRemaining())
+}
+
+func TestDoRequestAcceptsEmptySuccessBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	require.NoError(t, client.DeleteGroupMember(t.Context(), "group-id", "user-id"))
+}
+
+// An empty ids field is ambiguous, so the client reads the user's group_ids
+// instead of scanning the group: present means the membership already existed,
+// absent means Zoom accepted the request and added nobody.
+func TestEnsureGroupMemberResolvesAmbiguousCreate(t *testing.T) {
+	tests := []struct {
+		name        string
+		ids         string
+		userBody    string
+		wantCreated bool
+		wantCode    codes.Code
+	}{
+		{
+			name:        "echoed user was created",
+			ids:         "user-id",
+			wantCreated: true,
+		},
+		{
+			name:        "empty ids and the user already belongs to the group",
+			userBody:    `{"id":"user-id","group_ids":["other-group","group-id"]}`,
+			wantCreated: false,
+		},
+		{
+			name:     "empty ids and the user belongs to no group",
+			userBody: `{"id":"user-id"}`,
+			wantCode: codes.FailedPrecondition,
+		},
+		{
+			name:     "empty ids and the user belongs to another group",
+			userBody: `{"id":"user-id","group_ids":["other-group"]}`,
+			wantCode: codes.FailedPrecondition,
+		},
+		{
+			name:        "unexpected echoed id still confirms existing membership",
+			ids:         "someone-else",
+			userBody:    `{"id":"user-id","group_ids":["group-id"]}`,
+			wantCreated: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userReads := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method {
+				case http.MethodPost:
+					assert.Equal(t, "/groups/group-id/members", r.URL.Path)
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"ids":"` + tt.ids + `"}`))
+				case http.MethodGet:
+					assert.Equal(t, "/users/user-id", r.URL.Path)
+					userReads++
+					_, _ = w.Write([]byte(tt.userBody))
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupMember(t.Context(), "group-id", "user-id")
+			if tt.wantCode != codes.OK {
+				require.Error(t, err)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				assert.Equal(t, 1, userReads)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCreated, created)
+			if tt.userBody == "" {
+				assert.Zero(t, userReads)
+			} else {
+				assert.Equal(t, 1, userReads)
+			}
+		})
+	}
+}
+
+func TestEnsureGroupAdminMatchesDocumentedEmail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ids":""}`))
+		case http.MethodGet:
+			assert.Equal(t, "/groups/group-id/admins", r.URL.Path)
+			_, _ = w.Write([]byte(`{"admins":[{"email":"User-ID@example.com","name":"User"}],"next_page_token":""}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	created, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(t.Context(), "group-id", "user-id", "user-id@example.com")
+	require.NoError(t, err)
+	assert.False(t, created)
+}
+
+func TestDoRequestClosesTransportBodyExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		call       func(*Client) error
+	}{
+		{
+			name:       "success",
+			statusCode: http.StatusNoContent,
+			call: func(client *Client) error {
+				return client.DeleteUser(t.Context(), "user-id", DeleteUserOptions{})
+			},
+		},
+		{
+			name:       "API error",
+			statusCode: http.StatusBadRequest,
+			body:       `{"code":300,"message":"bad request"}`,
+			call: func(client *Client) error {
+				return client.DeleteUser(t.Context(), "user-id", DeleteUserOptions{})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			closeCount := 0
+			httpClient := &http.Client{
+				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: tt.statusCode,
+						Status:     http.StatusText(tt.statusCode),
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body: &countingReadCloser{
+							Reader:     strings.NewReader(tt.body),
+							closeCount: &closeCount,
+						},
+						Request: req,
+					}, nil
+				}),
+			}
+			client := newTestClient(t, httpClient, "https://api.zoom.test/v2")
+
+			err := tt.call(client)
+			if tt.statusCode >= http.StatusBadRequest {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, 1, closeCount)
+		})
+	}
+}
+
+func TestDoRequestPreservesHTTPClassification(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantCode   codes.Code
+	}{
+		{name: "generic bad request", statusCode: http.StatusBadRequest, wantCode: codes.InvalidArgument},
+		{name: "rate limited", statusCode: http.StatusTooManyRequests, wantCode: codes.Unavailable},
+		{name: "server error", statusCode: http.StatusServiceUnavailable, wantCode: codes.Unavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-RateLimit-Limit", "10")
+				w.Header().Set("X-RateLimit-Remaining", "0")
+				w.Header().Set("Retry-After", "42")
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(`{"code":300,"message":"request failed"}`))
+			}))
+			defer srv.Close()
+
+			client := newTestClient(t, srv.Client(), srv.URL)
+			err := client.DeleteUser(t.Context(), "user123", DeleteUserOptions{})
+			require.Error(t, err)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+
+			if tt.wantCode == codes.Unavailable {
+				st := status.Convert(err)
+				var description *v2.RateLimitDescription
+				for _, detail := range st.Details() {
+					if rateLimit, ok := detail.(*v2.RateLimitDescription); ok {
+						description = rateLimit
+					}
+				}
+				require.NotNil(t, description)
+			}
+		})
+	}
 }

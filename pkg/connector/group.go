@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -11,14 +12,9 @@ import (
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
-
-var entitlements = []string{
-	memberEntitlement,
-	adminEntitlement,
-}
 
 type groupResourceType struct {
 	resourceType *v2.ResourceType
@@ -29,14 +25,12 @@ func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return g.resourceType
 }
 
-// Create a new connector resource for a Zoom group.
-func groupResource(group zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func groupResource(group *zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]any{
 		"group_name": group.Name,
 		"group_id":   group.ID,
 	}
-
-	ret, err := resource.NewGroupResource(
+	return resource.NewGroupResource(
 		group.Name,
 		resourceTypeGroup,
 		group.ID,
@@ -44,46 +38,27 @@ func groupResource(group zoom.Group, parentResourceID *v2.ResourceId) (*v2.Resou
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	return ret, nil
 }
 
 func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var pageToken string
-	var rv []*v2.Resource
-
 	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeGroup.Id})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	groups, nextToken, resp, err := g.client.GetGroups(ctx, page)
-	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	if nextToken != "" {
-		pageToken, err = bag.NextToken(nextToken)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	annos, err := parseResp(resp)
+	groups, nextToken, annos, err := g.client.GetGroups(ctx, page)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	pageToken, err := nextBagToken(bag, nextToken)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rv := make([]*v2.Resource, 0, len(groups))
 	for _, group := range groups {
-		groupCopy := group
-		gr, err := groupResource(groupCopy, parentId)
+		gr, err := groupResource(group, parentId)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -94,72 +69,52 @@ func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, o
 }
 
 func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
-	var rv []*v2.Entitlement
-
-	for _, entitlement := range entitlements {
+	rv := make([]*v2.Entitlement, 0, 2)
+	for _, entitlement := range []string{memberEntitlement, adminEntitlement} {
 		options := []ent.EntitlementOption{
 			ent.WithGrantableTo(resourceTypeUser),
 			ent.WithDescription(fmt.Sprintf("Zoom %s group", r.DisplayName)),
 			ent.WithDisplayName(fmt.Sprintf("%s group %s", r.DisplayName, entitlement)),
 		}
-		en := ent.NewAssignmentEntitlement(r, entitlement, options...)
-		rv = append(rv, en)
+		rv = append(rv, ent.NewAssignmentEntitlement(r, entitlement, options...))
 	}
 	return rv, &resource.SyncOpResults{}, nil
 }
 
 func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	var rv []*v2.Grant
-
 	b := &pagination.Bag{}
 	err := b.Unmarshal(opts.PageToken.Token)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// Initialize: start paginating members first.
 	if b.Current() == nil {
 		b.Push(pagination.PageState{ResourceTypeID: memberEntitlement})
 	}
 
 	current := b.Current()
-
 	switch current.ResourceTypeID {
 	case memberEntitlement:
-		members, nextToken, resp, err := g.client.GetGroupMembers(ctx, r.Id.Resource, current.Token)
-		if err != nil {
-			if resp != nil {
-				resp.Body.Close()
-			}
-			return nil, nil, err
-		}
-		defer resp.Body.Close()
-
-		annos, err := parseResp(resp)
+		members, nextToken, annos, err := g.client.GetGroupMembers(ctx, r.Id.Resource, current.Token)
 		if err != nil {
 			return nil, nil, err
 		}
-
+		rv := make([]*v2.Grant, 0, len(members))
 		for _, member := range members {
-			memberCopy := member
-			ur, err := userResource(memberCopy, r.Id)
+			ur, err := userResource(member, r.Id)
 			if err != nil {
 				return nil, nil, err
 			}
 			rv = append(rv, grant.NewGrant(r, memberEntitlement, ur.Id))
 		}
-
 		if nextToken != "" {
 			err = b.Next(nextToken)
 		} else {
-			// Done with members, transition to admins.
 			b.Pop()
 			b.Push(pagination.PageState{ResourceTypeID: adminEntitlement})
 		}
 		if err != nil {
 			return nil, nil, err
 		}
-
 		pageToken, err := b.Marshal()
 		if err != nil {
 			return nil, nil, err
@@ -167,39 +122,26 @@ func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts res
 		return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 
 	case adminEntitlement:
-		admins, nextToken, resp, err := g.client.GetGroupAdmins(ctx, r.Id.Resource, current.Token)
-		if err != nil {
-			if resp != nil {
-				resp.Body.Close()
-			}
-			return nil, nil, err
-		}
-		defer resp.Body.Close()
-
-		annos, err := parseResp(resp)
+		admins, nextToken, annos, err := g.client.GetGroupAdmins(ctx, r.Id.Resource, current.Token)
 		if err != nil {
 			return nil, nil, err
 		}
-
+		rv := make([]*v2.Grant, 0, len(admins))
 		for _, admin := range admins {
-			adminCopy := admin
-			ur, err := userResource(adminCopy, r.Id)
+			ur, err := userResource(admin, r.Id)
 			if err != nil {
 				return nil, nil, err
 			}
 			rv = append(rv, grant.NewGrant(r, adminEntitlement, ur.Id))
 		}
-
 		if nextToken != "" {
 			err = b.Next(nextToken)
 			if err != nil {
 				return nil, nil, err
 			}
 		} else {
-			// Done with admins — pop leaves bag empty, Marshal returns "".
 			b.Pop()
 		}
-
 		pageToken, err := b.Marshal()
 		if err != nil {
 			return nil, nil, err
@@ -211,60 +153,73 @@ func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts res
 }
 
 func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-zoom: only users can be granted group membership",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted group membership")
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can be granted group membership"); err != nil {
+		return nil, nil, err
 	}
 
-	if entitlement.Slug == memberEntitlement {
-		err := g.client.AddGroupMembers(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
-		if err != nil {
-			return nil, nil, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
-		}
-		return nil, nil, nil
-	} else {
-		err := g.client.AddGroupAdmins(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
-		if err != nil {
-			return nil, nil, fmt.Errorf("baton-zoom: failed to add admin to group: %w", err)
-		}
+	slug, err := groupEntitlementSlug(entitlement.GetId())
+	if err != nil {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: %v", err)
 	}
 
-	return nil, nil, nil
+	grants := []*v2.Grant{
+		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+	}
+	groupID := entitlement.Resource.Id.Resource
+	userID := principal.Id.Resource
+
+	var (
+		created bool
+		annos   annotations.Annotations
+	)
+	switch slug {
+	case memberEntitlement:
+		created, annos, err = g.client.EnsureGroupMember(ctx, groupID, userID)
+		if err != nil {
+			return nil, annos, fmt.Errorf("baton-zoom: failed to add user to group: %w", err)
+		}
+	case adminEntitlement:
+		created, annos, err = g.client.EnsureGroupAdmin(ctx, groupID, userID, primaryEmail(principal))
+		if err != nil {
+			return nil, annos, fmt.Errorf("baton-zoom: failed to add admin to group: %w", err)
+		}
+	}
+	if !created {
+		annos.Update(&v2.GrantAlreadyExists{})
+	}
+	return grants, annos, nil
 }
 
 func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	entitlement := grant.Entitlement
 	principal := grant.Principal
-
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-zoom: only users can have role membership revoked",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, fmt.Errorf("baton-zoom: only users can have group membership revoked")
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can have group membership revoked"); err != nil {
+		return nil, err
 	}
 
-	if entitlement.Slug == memberEntitlement {
+	slug, err := groupEntitlementSlug(entitlement.GetId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "baton-zoom: %v", err)
+	}
+
+	if slug == memberEntitlement {
 		err := g.client.DeleteGroupMember(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 		if err != nil {
+			if zoom.IsAPIError(err, http.StatusNotFound, zoom.GroupMemberNotFoundErrorCode) {
+				return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+			}
 			return nil, fmt.Errorf("baton-zoom: failed to remove group member: %w", err)
 		}
-	} else {
-		err := g.client.DeleteGroupAdmin(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
-		if err != nil {
-			return nil, fmt.Errorf("baton-zoom: failed to remove group admin: %w", err)
-		}
+		return nil, nil
 	}
 
+	err = g.client.DeleteGroupAdmin(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+	if err != nil {
+		if zoom.IsAPIError(err, http.StatusBadRequest, zoom.GroupAdminNotFoundErrorCode) {
+			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+		}
+		return nil, fmt.Errorf("baton-zoom: failed to remove group admin: %w", err)
+	}
 	return nil, nil
 }
 

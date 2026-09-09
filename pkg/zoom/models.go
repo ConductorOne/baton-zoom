@@ -1,5 +1,7 @@
 package zoom
 
+import "github.com/conductorone/baton-sdk/pkg/uhttp"
+
 type ActionType string
 type UserType int
 
@@ -28,23 +30,77 @@ const (
 	Delete       DeleteAction = "delete"
 )
 
-type Group struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+// APIError is Zoom's API error envelope.
+type APIError struct {
+	StatusCode int    `json:"-"`
+	Body       string `json:"-"`
+	Code       int    `json:"code"`
+	Msg        string `json:"message"`
 }
 
-type Pagination struct {
+// OAuthError is Zoom's OAuth token error envelope.
+type OAuthError struct {
+	StatusCode int    `json:"-"`
+	Body       string `json:"-"`
+	Code       string `json:"error"`
+	Reason     string `json:"reason"`
+}
+
+type Client struct {
+	httpClient *uhttp.BaseHttpClient
+	token      string
+	baseURL    string
+}
+
+type accessTokenResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+type Payload struct {
+	ID string `json:"id"`
+}
+
+// membershipMutationResponse is Zoom's reply to a group member or admin add.
+// IDs lists only the ids the call actually created, so it is empty whenever
+// the call created nothing.
+type membershipMutationResponse struct {
+	IDs string `json:"ids"`
+}
+
+type PaginationData struct {
 	NextPageToken string `json:"next_page_token"`
 	PageSize      int    `json:"page_size"`
 	TotalRecords  int    `json:"total_records"`
 }
 
-type Member struct {
-	Email     string `json:"email"`
-	FirstName string `json:"first_name"`
-	ID        string `json:"id"`
-	LastName  string `json:"last_name"`
-	Type      int    `json:"type"`
+type usersResponse struct {
+	PaginationData
+	Users []*User `json:"users"`
+}
+
+type Group struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type groupsResponse struct {
+	PaginationData
+	Groups []*Group `json:"groups"`
+}
+
+type contactGroupsResponse struct {
+	PaginationData
+	Groups []*ContactGroup `json:"groups"`
+}
+
+type membersResponse struct {
+	PaginationData
+	Members []*User `json:"members"`
+}
+
+type adminsResponse struct {
+	PaginationData
+	Admins []*User `json:"admins"`
 }
 
 type Role struct {
@@ -54,16 +110,21 @@ type Role struct {
 	Type        string `json:"type"`
 }
 
+type rolesResponse struct {
+	Roles []*Role `json:"roles"`
+}
+
 type User struct {
-	ID          string `json:"id"`
-	Email       string `json:"email"`
-	FirstName   string `json:"first_name"`
-	LastName    string `json:"last_name"`
-	RoleName    string `json:"role_name"`
-	Type        int    `json:"type"`
-	DisplayName string `json:"display_name"`
-	RoleID      string `json:"role_id"`
-	Status      string `json:"status"`
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	FirstName   string   `json:"first_name"`
+	LastName    string   `json:"last_name"`
+	RoleName    string   `json:"role_name"`
+	Type        int      `json:"type"`
+	DisplayName string   `json:"display_name"`
+	RoleID      string   `json:"role_id"`
+	Status      string   `json:"status"`
+	GroupIDs    []string `json:"group_ids"`
 }
 
 type UserCreationBody struct {
@@ -110,6 +171,21 @@ type GroupMember struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Type int    `json:"type"`
+}
+
+type contactGroupMembersResponse struct {
+	PaginationData
+	Members []*GroupMember `json:"group_members"`
+}
+
+// DeleteUserOptions configures the removal action and optional ownership transfer.
+type DeleteUserOptions struct {
+	// Empty uses Zoom's default action, Disassociate.
+	Action            DeleteAction
+	TransferEmail     string
+	TransferMeeting   bool
+	TransferWebinar   bool
+	TransferRecording bool
 }
 
 // PlanBase describes the base plan slot from GET /v2/accounts/me/plans/usage.

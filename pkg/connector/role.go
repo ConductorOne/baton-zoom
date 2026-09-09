@@ -10,14 +10,11 @@ import (
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 )
 
-const (
-	memberEntitlement = "member"
-	adminEntitlement  = "admin"
-)
+// roleExclusionGroup marks Zoom roles as mutually exclusive: a user carries
+// exactly one role_id, so granting a role replaces the previous one.
+const roleExclusionGroup = "zoom-role"
 
 type roleResourceType struct {
 	resourceType *v2.ResourceType
@@ -28,14 +25,12 @@ func (r *roleResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 	return r.resourceType
 }
 
-// Create a new connector resource for a Zoom role.
-func roleResource(role zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func roleResource(role *zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]any{
 		"role_name": role.Name,
 		"role_id":   role.ID,
 	}
-
-	ret, err := resource.NewRoleResource(
+	return resource.NewRoleResource(
 		role.Name,
 		resourceTypeRole,
 		role.ID,
@@ -43,33 +38,17 @@ func roleResource(role zoom.Role, parentResourceID *v2.ResourceId) (*v2.Resource
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	return ret, nil
 }
 
 func (r *roleResourceType) List(ctx context.Context, parentId *v2.ResourceId, _ resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var rv []*v2.Resource
-
-	roles, resp, err := r.client.GetRoles(ctx)
-	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	annos, err := parseResp(resp)
+	roles, annos, err := r.client.GetRoles(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	rv := make([]*v2.Resource, 0, len(roles))
 	for _, role := range roles {
-		roleCopy := role
-		rr, err := roleResource(roleCopy, parentId)
+		rr, err := roleResource(role, parentId)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -80,91 +59,74 @@ func (r *roleResourceType) List(ctx context.Context, parentId *v2.ResourceId, _ 
 }
 
 func (r *roleResourceType) Entitlements(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
-	var rv []*v2.Entitlement
-
 	roleOptions := []ent.EntitlementOption{
 		ent.WithGrantableTo(resourceTypeUser),
+		ent.WithExclusionGroup(roleExclusionGroup),
 		ent.WithDescription(fmt.Sprintf("Role %s in zoom", res.DisplayName)),
 		ent.WithDisplayName(fmt.Sprintf("%s role %s", res.DisplayName, memberEntitlement)),
 	}
-
-	en := ent.NewPermissionEntitlement(res, memberEntitlement, roleOptions...)
-	rv = append(rv, en)
-
-	return rv, &resource.SyncOpResults{}, nil
+	return []*v2.Entitlement{
+		ent.NewPermissionEntitlement(res, memberEntitlement, roleOptions...),
+	}, &resource.SyncOpResults{}, nil
 }
 
 func (r *roleResourceType) Grants(ctx context.Context, res *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	var rv []*v2.Grant
-	var pageToken string
-
 	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{ResourceType: resourceTypeRole.Id})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	roleMembers, nextToken, resp, err := r.client.GetRoleMembers(ctx, res.Id.Resource, page)
-	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	if nextToken != "" {
-		pageToken, err = bag.NextToken(nextToken)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	annos, err := parseResp(resp)
+	roleMembers, nextToken, annos, err := r.client.GetRoleMembers(ctx, res.Id.Resource, page)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, member := range roleMembers {
-		memberCopy := member
-		ur, err := userResource(memberCopy, res.Id)
+	pageToken, err := nextBagToken(bag, nextToken)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rv := make([]*v2.Grant, 0, len(roleMembers))
+	for _, user := range roleMembers {
+		ur, err := userResource(user, res.Id)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		grant := grant.NewGrant(res, memberEntitlement, ur.Id)
-		rv = append(rv, grant)
+		rv = append(rv, grant.NewGrant(res, memberEntitlement, ur.Id))
 	}
 
 	return rv, &resource.SyncOpResults{NextPageToken: pageToken, Annotations: annos}, nil
 }
 
 func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-zoom: only users can be granted role membership",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted role membership")
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can be granted role membership"); err != nil {
+		return nil, nil, err
 	}
 
-	user, resp, err := r.client.GetUser(ctx, principal.Id.Resource)
+	result := []*v2.Grant{
+		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+	}
+
+	user, _, err := r.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, nil, fmt.Errorf("baton-zoom: failed to get user before granting role: %w", err)
 	}
-	resp.Body.Close()
-
 	if user.Status == userStatusInactive {
 		return nil, nil, fmt.Errorf("baton-zoom: cannot grant role to inactive user %s", principal.Id.Resource)
 	}
-
 	if user.RoleID == entitlement.Resource.Id.Resource {
-		return nil, annotations.New(&v2.GrantAlreadyExists{}), nil
+		return result, annotations.New(&v2.GrantAlreadyExists{}), nil
+	}
+
+	var replacedGrantID string
+	if user.RoleID != "" {
+		previousRole := v2.Resource_builder{
+			Id: v2.ResourceId_builder{
+				ResourceType: resourceTypeRole.Id,
+				Resource:     user.RoleID,
+			}.Build(),
+		}.Build()
+		replacedGrantID = grant.NewGrant(previousRole, memberEntitlement, principal.GetId()).GetId()
 	}
 
 	err = r.client.AssignRole(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
@@ -172,37 +134,27 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, nil, fmt.Errorf("baton-zoom: failed to assign role to user: %w", err)
 	}
 
-	return nil, nil, nil
+	var annos annotations.Annotations
+	if replacedGrantID != "" {
+		annos = grant.AppendGrantReplaced(annos, replacedGrantID)
+	}
+	return result, annos, nil
 }
 
 func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	entitlement := grant.Entitlement
 	principal := grant.Principal
-
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Debug(
-			"baton-zoom: only users can have role membership revoked",
-			zap.String("principal_type", principal.Id.ResourceType),
-			zap.String("principal_id", principal.Id.Resource),
-		)
-		return nil, fmt.Errorf("baton-zoom: only users can have role membership revoked")
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can have role membership revoked"); err != nil {
+		return nil, err
 	}
 
-	user, resp, err := r.client.GetUser(ctx, principal.Id.Resource)
+	user, _, err := r.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, fmt.Errorf("baton-zoom: failed to get user before revoking role: %w", err)
 	}
-	resp.Body.Close()
-
 	if user.Status == userStatusInactive {
 		return nil, fmt.Errorf("baton-zoom: cannot revoke role from inactive user %s", principal.Id.Resource)
 	}
-
 	if user.RoleID != entitlement.Resource.Id.Resource {
 		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 	}
@@ -211,7 +163,6 @@ func (r *roleResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	if err != nil {
 		return nil, fmt.Errorf("baton-zoom: failed to unassign role from user: %w", err)
 	}
-
 	return nil, nil
 }
 

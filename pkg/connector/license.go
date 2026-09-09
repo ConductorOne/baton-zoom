@@ -80,15 +80,16 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
 
-const (
-	assignedEntitlement = "assigned"
-)
+// licenseExclusionGroup marks the tiers as mutually exclusive: a Zoom user
+// carries exactly one type, so granting a tier replaces the previous one.
+const licenseExclusionGroup = "zoom-license"
 
 // licenseDefinition is one Zoom license tier (id + display name).
 type licenseDefinition struct {
@@ -149,12 +150,9 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 	logger := ctxzap.Extract(ctx)
 
 	var purchased, consumed int64
-	usage, resp, err := l.client.GetAccountPlanUsage(ctx)
-	if resp != nil {
-		defer resp.Body.Close()
-	}
+	usage, annos, err := l.client.GetAccountPlanUsage(ctx)
 	if err != nil {
-		logger.Warn(
+		logger.Debug(
 			"baton-zoom: failed to fetch plan usage; emitting licenses without seat counts",
 			zap.Error(err),
 		)
@@ -172,11 +170,6 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 		rv = append(rv, lr)
 	}
 
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	return rv, &resource.SyncOpResults{Annotations: annos}, nil
 }
 
@@ -185,6 +178,7 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 func (l *licenseResourceType) Entitlements(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
 	opts := []ent.EntitlementOption{
 		ent.WithGrantableTo(resourceTypeUser),
+		ent.WithExclusionGroup(licenseExclusionGroup),
 		ent.WithDisplayName(fmt.Sprintf("%s license %s", res.DisplayName, assignedEntitlement)),
 		ent.WithDescription(fmt.Sprintf("Holds a %s license seat in Zoom", res.DisplayName)),
 	}
@@ -211,24 +205,39 @@ func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource,
 		return nil, nil, fmt.Errorf("baton-zoom: invalid license resource id %q: %w", entitlement.Resource.Id.Resource, err)
 	}
 
-	user, resp, err := l.client.GetUser(ctx, principal.Id.Resource)
+	result := []*v2.Grant{
+		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+	}
+
+	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, nil, fmt.Errorf("baton-zoom: failed to get user before granting license: %w", err)
 	}
-	resp.Body.Close()
 
 	if user.Type == targetType {
-		return nil, annotations.New(&v2.GrantAlreadyExists{}), nil
+		return result, annotations.New(&v2.GrantAlreadyExists{}), nil
+	}
+
+	var replacedGrantID string
+	if isLicenseTier(zoom.UserType(user.Type)) {
+		previousTier := v2.Resource_builder{
+			Id: v2.ResourceId_builder{
+				ResourceType: resourceTypeLicense.Id,
+				Resource:     strconv.Itoa(user.Type),
+			}.Build(),
+		}.Build()
+		replacedGrantID = grant.NewGrant(previousTier, assignedEntitlement, principal.GetId()).GetId()
 	}
 
 	if err := l.client.PatchUserLicense(ctx, principal.Id.Resource, zoom.UserType(targetType)); err != nil {
 		return nil, nil, fmt.Errorf("baton-zoom: failed to assign license to user: %w", err)
 	}
 
-	return nil, nil, nil
+	var annos annotations.Annotations
+	if replacedGrantID != "" {
+		annos = grant.AppendGrantReplaced(annos, replacedGrantID)
+	}
+	return result, annos, nil
 }
 
 // Revoke downgrades the user to Basic via PATCH (Zoom has no "no license"
@@ -247,14 +256,10 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 		return nil, fmt.Errorf("baton-zoom: invalid license resource id %q: %w", entitlement.Resource.Id.Resource, err)
 	}
 
-	user, resp, err := l.client.GetUser(ctx, principal.Id.Resource)
+	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, fmt.Errorf("baton-zoom: failed to get user before revoking license: %w", err)
 	}
-	resp.Body.Close()
 
 	if user.Type != grantedType {
 		return annotations.New(&v2.GrantAlreadyRevoked{}), nil

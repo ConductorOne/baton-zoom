@@ -1,586 +1,438 @@
 package zoom
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"google.golang.org/grpc/codes"
 )
 
-type Client struct {
-	httpClient *http.Client
-	token      string
-	baseURL    string
-}
-
-// APIError preserves HTTP response metadata and Zoom error details.
-// Never unmarshal a response body into this type: StatusCode and Body are
-// exported and untagged, so json.Unmarshal would match "statusCode"/"body"
-// case-insensitively and overwrite the real HTTP values. doRequest decodes
-// Zoom's code/message into a separate envelope for that reason.
-type APIError struct {
-	StatusCode int
-	Body       string
-	Code       int
-	Message    string
-}
-
-func (e *APIError) Error() string {
-	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Body)
-}
-
-const (
-	defaultBaseURL   = "https://api.zoom.us/v2"
-	defaultAuthURL   = "https://zoom.us/oauth/token"
-	resourcePageSize = "50"
-
-	// UserNotFoundErrorCode is Zoom's API error code for a missing user.
-	UserNotFoundErrorCode = 1001
-)
-
-// IsUserNotFound requires Zoom's user-not-found code, not only HTTP 404.
-func IsUserNotFound(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) &&
-		apiErr.StatusCode == http.StatusNotFound &&
-		apiErr.Code == UserNotFoundErrorCode
-}
-
-func NewClient(httpClient *http.Client, token string, baseURL string) *Client {
+// NewClient validates baseURL and wraps httpClient with Baton's HTTP client.
+func NewClient(ctx context.Context, httpClient *http.Client, token string, baseURL string) (*Client, error) {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	validatedBaseURL, err := validateBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	baseHTTPClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("create HTTP client: %w", err)
+	}
 	return &Client{
-		httpClient: httpClient,
+		httpClient: baseHTTPClient,
 		token:      token,
-		baseURL:    baseURL,
+		baseURL:    validatedBaseURL,
+	}, nil
+}
+
+// RequestAccessToken obtains an account-credentials token from authURL,
+// defaulting to https://zoom.us/oauth/token. No API scope is required.
+func RequestAccessToken(ctx context.Context, accountId string, clientId string, clientSecret string, authURL string) (string, error) {
+	if authURL == "" {
+		authURL = defaultAuthURL
 	}
-}
-
-type Payload struct {
-	ID string `json:"id"`
-}
-
-type PaginationData struct {
-	NextPageToken string `json:"next_page_token"`
-	PageSize      int    `json:"page_size"`
-	TotalRecords  int    `json:"total_records"`
-}
-
-// returns query params with pagination options.
-func paginationQuery(nextToken string) url.Values {
-	q := url.Values{}
-	q.Add("next_page_token", nextToken)
-	q.Add("page_size", resourcePageSize)
-	return q
-}
-
-// RequestAccessToken creates bearer token needed to use the Zoom API.
-func RequestAccessToken(ctx context.Context, accountId string, clientId string, clientSecret string) (string, error) {
-	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	httpClient, err := uhttp.NewBasicAuth(clientId, clientSecret).GetClient(
+		ctx,
+		uhttp.WithLogger(true, ctxzap.Extract(ctx)),
+	)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create authentication client: %w", err)
 	}
-
-	data := url.Values{}
-	data.Add("account_id", accountId)
-	data.Add("grant_type", "account_credentials")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, defaultAuthURL, nil)
+	baseHTTPClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create authentication HTTP client: %w", err)
 	}
-
-	req.Header.Add("accept", "application/json")
-	req.SetBasicAuth(clientId, clientSecret)
-	req.URL.RawQuery = data.Encode()
-
-	resp, err := httpClient.Do(req)
+	requestURL, err := url.Parse(authURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse authentication URL: %w", err)
 	}
-
-	defer resp.Body.Close()
-
-	var res struct {
-		AccessToken string `json:"Access_token"`
+	requestURL.RawQuery = url.Values{
+		accountIDQueryKey: {accountId},
+		grantTypeQueryKey: {accountCredentialsGrant},
+	}.Encode()
+	req, err := baseHTTPClient.NewRequest(ctx, http.MethodPost, requestURL, uhttp.WithAcceptJSONHeader())
+	if err != nil {
+		return "", fmt.Errorf("create authentication request: %w", err)
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", err
+	res := &accessTokenResponse{}
+	oauthErr := &OAuthError{}
+	resp, err := baseHTTPClient.Do(req, withZoomOAuthErrorResponse(oauthErr), withZoomJSONResponse(res))
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err != nil {
+		return "", mapAuthenticationError(err)
+	}
+	if res.AccessToken == "" {
+		return "", fmt.Errorf("authentication response missing access_token")
 	}
 	return res.AccessToken, nil
 }
 
-// GetUsers returns Zoom users filtered by status ("active", "inactive", or "pending").
-func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/users")
-	var res struct {
-		PaginationData
-		Users []User `json:"users"`
-	}
-
-	q := paginationQuery(nextToken)
-	q.Set("status", status)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetUsers returns one page from GET /v2/users.
+// Required scope: user:read:list_users:admin.
+func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) ([]*User, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, usersPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	if res.NextPageToken != "" {
-		return res.Users, res.NextPageToken, resp, nil
+	query := paginationQuery(nextToken)
+	query.Set(statusQueryKey, status)
+	res := &usersResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, query, nil)
+	if err != nil {
+		return nil, "", annos, err
 	}
-
-	return res.Users, "", resp, nil
+	return res.Users, res.NextPageToken, annos, nil
 }
 
-// GetGroups returns all Zoom groups.
-func (c *Client) GetGroups(ctx context.Context, nextToken string) ([]Group, string, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/groups")
-	var res struct {
-		PaginationData
-		Groups []Group `json:"groups"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetGroups returns one page from GET /v2/groups.
+// Required scope: group:read:list_groups:admin.
+func (c *Client) GetGroups(ctx context.Context, nextToken string) ([]*Group, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	if res.NextPageToken != "" {
-		return res.Groups, res.NextPageToken, resp, nil
+	res := &groupsResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
 	}
-
-	return res.Groups, "", resp, nil
+	return res.Groups, res.NextPageToken, annos, nil
 }
 
-// GetContactGroups returns all contact groups from Zoom.
-func (c *Client) GetContactGroups(ctx context.Context, nextToken string) ([]ContactGroup, string, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/contacts/groups")
-	var res struct {
-		PaginationData
-		Groups []ContactGroup `json:"groups"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetContactGroups returns one page from GET /v2/contacts/groups.
+// Required scope: contact_group:read:list_groups:admin.
+func (c *Client) GetContactGroups(ctx context.Context, nextToken string) ([]*ContactGroup, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, contactsPath, groupsPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	if res.NextPageToken != "" {
-		return res.Groups, res.NextPageToken, resp, nil
+	res := &contactGroupsResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
 	}
-
-	return res.Groups, "", resp, nil
+	return res.Groups, res.NextPageToken, annos, nil
 }
 
-// GetRoles returns all Zoom roles.
-func (c *Client) GetRoles(ctx context.Context) ([]Role, *http.Response, error) {
-	url := fmt.Sprint(c.baseURL, "/roles")
-	var res struct {
-		Roles []Role `json:"roles"`
-	}
-
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, nil, nil)
+// GetRoles returns all roles from GET /v2/roles, which is not paginated.
+// Required scope: role:read:list_roles:admin.
+func (c *Client) GetRoles(ctx context.Context) ([]*Role, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, rolesPath)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	return res.Roles, resp, nil
+	res := &rolesResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, nil, nil)
+	if err != nil {
+		return nil, annos, err
+	}
+	return res.Roles, annos, nil
 }
 
-// GetGroupMembers returns one page of Zoom group members.
-func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/groups/%s/members", c.baseURL, groupId)
-	var res struct {
-		PaginationData
-		Members []User `json:"members"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetGroupMembers returns one page from GET /v2/groups/{groupId}/members.
+// Required scope: group:read:list_members:admin.
+func (c *Client) GetGroupMembers(ctx context.Context, groupId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, membersPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	return res.Members, res.NextPageToken, resp, nil
+	res := &membersResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
+	}
+	return res.Members, res.NextPageToken, annos, nil
 }
 
-// GetGroupAdmins returns one page of Zoom group admins.
-func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/groups/%s/admins", c.baseURL, groupId)
-	var res struct {
-		PaginationData
-		Admins []User `json:"admins"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetGroupAdmins returns one page from GET /v2/groups/{groupId}/admins.
+// Required scope: group:read:administrator:admin.
+func (c *Client) GetGroupAdmins(ctx context.Context, groupId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, adminsPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	return res.Admins, res.NextPageToken, resp, nil
+	res := &adminsResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
+	}
+	return res.Admins, res.NextPageToken, annos, nil
 }
 
-// GetContactGroupMembers returns all Zoom contact group members.
-func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nextToken string) ([]GroupMember, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/contacts/groups/%s/members", c.baseURL, groupId)
-	var res struct {
-		PaginationData
-		Members []GroupMember `json:"group_members"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetContactGroupMembers returns one page from GET /v2/contacts/groups/{groupId}/members.
+// Required scope: contact_group:read:list_members:admin.
+func (c *Client) GetContactGroupMembers(ctx context.Context, groupId string, nextToken string) ([]*GroupMember, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, contactsPath, groupsPath, groupId, membersPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	if res.NextPageToken != "" {
-		return res.Members, res.NextPageToken, resp, nil
+	res := &contactGroupMembersResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
 	}
-
-	return res.Members, "", resp, nil
+	return res.Members, res.NextPageToken, annos, nil
 }
 
-// GetRoleMembers returns all Zoom role members.
-func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken string) ([]User, string, *http.Response, error) {
-	url := fmt.Sprintf("%s/roles/%s/members", c.baseURL, roleId)
-	var res struct {
-		PaginationData
-		Members []User `json:"members"`
-	}
-
-	q := paginationQuery(nextToken)
-	resp, err := c.doRequest(ctx, url, &res, http.MethodGet, q, nil)
+// GetRoleMembers returns one page from GET /v2/roles/{roleId}/members.
+// Required scope: role:read:list_members:admin.
+func (c *Client) GetRoleMembers(ctx context.Context, roleId string, nextToken string) ([]*User, string, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, rolesPath, roleId, membersPath)
 	if err != nil {
 		return nil, "", nil, err
 	}
-
-	if res.NextPageToken != "" {
-		return res.Members, res.NextPageToken, resp, nil
+	res := &membersResponse{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, paginationQuery(nextToken), nil)
+	if err != nil {
+		return nil, "", annos, err
 	}
-
-	return res.Members, "", resp, nil
+	return res.Members, res.NextPageToken, annos, nil
 }
 
-// GetUser returns user details.
-func (c *Client) GetUser(ctx context.Context, userId string) (User, *http.Response, error) {
-	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+// GetUser returns one user from GET /v2/users/{userId}.
+// Required scope: user:read:user:admin.
+func (c *Client) GetUser(ctx context.Context, userId string) (*User, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, usersPath, userId)
 	if err != nil {
-		return User{}, nil, err
+		return nil, nil, err
 	}
-
-	var res User
-	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
+	res := &User{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, nil, nil)
 	if err != nil {
-		return User{}, nil, err
+		return nil, annos, err
 	}
-
-	return res, resp, nil
+	return res, annos, nil
 }
 
-// AddGroupMembers adds user to a group.
-func (c *Client) AddGroupMembers(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/members")
-	members := []Payload{
-		{
-			ID: userId,
-		},
-	}
+// EnsureGroupMember POSTs the user into the group and returns whether Zoom
+// newly created the membership. Zoom answers 201 even when it added nobody:
+// empty or unexpected ids can mean the user already belonged, or that Zoom
+// accepted the request and ignored it. When the posted user is not echoed,
+// the user's group_ids tells those cases apart. Required scopes:
+// group:write:member:admin and, on the ambiguous path, user:read:user:admin.
+func (c *Client) EnsureGroupMember(ctx context.Context, groupId, userId string) (bool, annotations.Annotations, error) {
+	output := annotations.New()
 
-	requestBody, err := json.Marshal(map[string]any{
-		"members": members,
-	})
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, membersPath)
 	if err != nil {
-		return err
+		return false, output, err
+	}
+	added := &membershipMutationResponse{}
+	annos, err := c.doRequest(ctx, endpoint, added, http.MethodPost, nil, idsBody(membersBodyKey, userId))
+	output.Merge(annos...)
+	if err != nil {
+		return false, output, err
+	}
+	if containsCSVToken(added.IDs, userId) {
+		return true, output, nil
 	}
 
-	var res struct {
-		MemberIDs []string `json:"member_ids"`
+	user, annos, err := c.GetUser(ctx, userId)
+	output.Merge(annos...)
+	if err != nil {
+		return false, output, err
 	}
-	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
-	if e != nil {
-		return e
+	if slices.Contains(user.GroupIDs, groupId) {
+		return false, output, nil
 	}
-
-	defer resp.Body.Close()
-
-	return nil
+	return false, output, uhttp.WrapErrors(codes.FailedPrecondition, "zoom did not add the user to the group")
 }
 
-// AddGroupAdmins adds admin to the group.
-func (c *Client) AddGroupAdmins(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/admins")
-	members := []Payload{
-		{
-			ID: userId,
-		},
+// EnsureGroupAdmin POSTs the user as a group administrator and returns whether
+// Zoom newly created the assignment. Confirmation matches the documented admin
+// email when ids does not echo the posted user. Required scopes:
+// group:write:administrator:admin and, on the ambiguous path, group:read:administrator:admin.
+func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email string) (bool, annotations.Annotations, error) {
+	output := annotations.New()
+	if email == "" {
+		return false, output, uhttp.WrapErrors(codes.InvalidArgument, "group admin assignment requires the user's email")
 	}
 
-	requestBody, err := json.Marshal(map[string]any{
-		"admins": members,
-	})
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, adminsPath)
 	if err != nil {
-		return err
+		return false, output, err
+	}
+	added := &membershipMutationResponse{}
+	annos, err := c.doRequest(ctx, endpoint, added, http.MethodPost, nil, idsBody(adminsBodyKey, userId))
+	output.Merge(annos...)
+	if err != nil {
+		return false, output, err
+	}
+	if containsCSVToken(added.IDs, userId) {
+		return true, output, nil
 	}
 
-	var res struct {
-		MemberIDs []string `json:"member_ids"`
+	var token string
+	for {
+		admins, nextToken, annos, err := c.GetGroupAdmins(ctx, groupId, token)
+		output.Merge(annos...)
+		if err != nil {
+			return false, output, err
+		}
+		for _, admin := range admins {
+			if admin.ID == userId || strings.EqualFold(admin.Email, email) {
+				return false, output, nil
+			}
+		}
+		if nextToken == "" {
+			return false, output, uhttp.WrapErrors(codes.FailedPrecondition, "zoom did not add the administrator to the group")
+		}
+		token = nextToken
 	}
-	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
-	if e != nil {
-		return e
-	}
-
-	defer resp.Body.Close()
-
-	return nil
 }
 
-// DeleteGroupAdmin removes admin from the group.
+// DeleteGroupAdmin removes an administrator via DELETE /v2/groups/{groupId}/admins/{userId}.
+// Required scope: group:delete:administrator:admin.
 func (c *Client) DeleteGroupAdmin(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/admins/", userId)
-
-	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, adminsPath, userId)
 	if err != nil {
 		return err
 	}
-
-	defer resp.Body.Close()
-
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodDelete, nil, nil)
+	return err
 }
 
-// DeleteGroupMember removes member from the group.
+// DeleteGroupMember removes a member via DELETE /v2/groups/{groupId}/members/{userId}.
+// Required scope: group:delete:member:admin.
 func (c *Client) DeleteGroupMember(ctx context.Context, groupId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/groups/", groupId, "/members/", userId)
-
-	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	endpoint, err := buildEndpoint(c.baseURL, groupsPath, groupId, membersPath, userId)
 	if err != nil {
 		return err
 	}
-
-	defer resp.Body.Close()
-
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodDelete, nil, nil)
+	return err
 }
 
-// AssignRole assigns role to a user.
+// AssignRole assigns a user via POST /v2/roles/{roleId}/members.
+// Required scope: role:write:member:admin.
 func (c *Client) AssignRole(ctx context.Context, roleId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/roles/", roleId, "/members")
-	members := []Payload{
-		{
-			ID: userId,
-		},
-	}
-
-	requestBody, err := json.Marshal(map[string]any{
-		"members": members,
-	})
-
+	endpoint, err := buildEndpoint(c.baseURL, rolesPath, roleId, membersPath)
 	if err != nil {
 		return err
 	}
-
-	var res struct {
-		AddAt string `json:"add_at"`
-		IDs   string `json:"ids"`
-	}
-	resp, e := c.doRequest(ctx, url, &res, http.MethodPost, nil, requestBody)
-	if e != nil {
-		return e
-	}
-
-	defer resp.Body.Close()
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodPost, nil, idsBody(membersBodyKey, userId))
+	return err
 }
 
-// UnassignRole unassigns role from a user.
+// UnassignRole removes a user via DELETE /v2/roles/{roleId}/members/{userId}.
+// Required scope: role:delete:member:admin.
 func (c *Client) UnassignRole(ctx context.Context, roleId, userId string) error {
-	url := fmt.Sprint(c.baseURL, "/roles/", roleId, "/members/", userId)
-
-	resp, err := c.doRequest(ctx, url, nil, http.MethodDelete, nil, nil)
+	endpoint, err := buildEndpoint(c.baseURL, rolesPath, roleId, membersPath, userId)
 	if err != nil {
 		return err
 	}
-
-	defer resp.Body.Close()
-
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodDelete, nil, nil)
+	return err
 }
 
+// CreateUser creates a user via POST /v2/users.
+// Required scope: user:write:user:admin.
 func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*UserCreationResponse, error) {
-	requestURL, err := url.JoinPath(c.baseURL, "users")
+	endpoint, err := buildEndpoint(c.baseURL, usersPath)
 	if err != nil {
 		return nil, err
 	}
-
-	requestBody, err := json.Marshal(newUser)
+	res := &UserCreationResponse{}
+	_, err = c.doRequest(ctx, endpoint, res, http.MethodPost, nil, newUser)
 	if err != nil {
 		return nil, err
 	}
-
-	var res UserCreationResponse
-	resp, err := c.doRequest(ctx, requestURL, &res, http.MethodPost, nil, requestBody)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	return &res, nil
+	return res, nil
 }
 
-func (c *Client) DeleteUser(ctx context.Context, userId string) error {
-	return c.DeleteUserWithTransfer(ctx, userId, DeleteUserOptions{})
-}
-
-// DeleteUserOptions configures the removal action and optional ownership transfer.
-type DeleteUserOptions struct {
-	// Empty uses Zoom's default action, Disassociate.
-	Action            DeleteAction
-	TransferEmail     string
-	TransferMeeting   bool
-	TransferWebinar   bool
-	TransferRecording bool
-}
-
-// DeleteUserWithTransfer removes a user and applies optional transfer settings.
-// Zoom requires TransferEmail whenever any Transfer* flag is set; the caller
-// must validate that (this method does not).
-func (c *Client) DeleteUserWithTransfer(ctx context.Context, userId string, opts DeleteUserOptions) error {
-	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+// DeleteUser removes a user via DELETE /v2/users/{userId} and applies the
+// optional transfer settings in opts. A zero DeleteUserOptions sends no query
+// parameters, leaving Zoom's default action. Required scope: user:delete:user:admin.
+func (c *Client) DeleteUser(ctx context.Context, userId string, opts DeleteUserOptions) error {
+	endpoint, err := buildEndpoint(c.baseURL, usersPath, userId)
 	if err != nil {
 		return err
 	}
-
-	var params url.Values
-	if opts.Action != "" || opts.TransferEmail != "" || opts.TransferMeeting || opts.TransferWebinar || opts.TransferRecording {
-		params = url.Values{}
-		if opts.Action != "" {
-			params.Set("action", string(opts.Action))
-		}
-		if opts.TransferEmail != "" {
-			params.Set("transfer_email", opts.TransferEmail)
-		}
-		if opts.TransferMeeting {
-			params.Set("transfer_meeting", "true")
-		}
-		if opts.TransferWebinar {
-			params.Set("transfer_webinar", "true")
-		}
-		if opts.TransferRecording {
-			params.Set("transfer_recording", "true")
-		}
-	}
-
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodDelete, params, nil)
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodDelete, deleteUserQuery(opts), nil)
+	return err
 }
 
-// PatchUserLicense updates a user's license tier via PATCH /v2/users/{userId}.
-// Zoom returns 204 No Content on success and applies any seat consumption or
-// release immediately.
+// PatchUserLicense updates a user's tier via PATCH /v2/users/{userId}.
+// Required scope: user:update:user:admin.
 func (c *Client) PatchUserLicense(ctx context.Context, userId string, licenseType UserType) error {
-	requestURL, err := url.JoinPath(c.baseURL, "users", userId)
+	endpoint, err := buildEndpoint(c.baseURL, usersPath, userId)
 	if err != nil {
 		return err
 	}
-
-	requestBody, err := json.Marshal(UserPatchBody{Type: licenseType})
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.doRequest(ctx, requestURL, nil, http.MethodPatch, nil, requestBody)
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-	return nil
+	_, err = c.doRequest(ctx, endpoint, nil, http.MethodPatch, nil, UserPatchBody{Type: licenseType})
+	return err
 }
 
-// GetAccountPlanUsage returns the base plan's purchased and consumed seat
-// counts from GET /v2/accounts/me/plans/usage. Requires the
-// `billing:read:plan_usage:admin` scope (or the legacy `billing:read`).
-func (c *Client) GetAccountPlanUsage(ctx context.Context) (*PlanUsage, *http.Response, error) {
-	requestURL := fmt.Sprint(c.baseURL, "/accounts/me/plans/usage")
-	var res PlanUsage
-
-	response, err := c.doRequest(ctx, requestURL, &res, http.MethodGet, nil, nil)
+// GetAccountPlanUsage returns GET /v2/accounts/me/plans/usage.
+// Required scope: billing:read:plan_usage:admin.
+func (c *Client) GetAccountPlanUsage(ctx context.Context) (*PlanUsage, annotations.Annotations, error) {
+	endpoint, err := buildEndpoint(c.baseURL, accountsPath, mePath, plansPath, usagePath)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	return &res, response, nil
+	res := &PlanUsage{}
+	annos, err := c.doRequest(ctx, endpoint, res, http.MethodGet, nil, nil)
+	if err != nil {
+		return nil, annos, err
+	}
+	return res, annos, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, url string, res interface{}, method string, params url.Values, payload []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
+// doRequest sends one authenticated Zoom API request through uhttp and returns
+// the response's rate-limit annotations. Rate-limit data is annotated even on
+// failure so callers keep the retry hints Zoom sends with 429 and 5xx.
+func (c *Client) doRequest(ctx context.Context, rawURL string, res any, method string, params url.Values, body any) (annotations.Annotations, error) {
+	requestURL, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse request URL: %w", err)
 	}
-
 	if params != nil {
-		req.URL.RawQuery = params.Encode()
+		requestURL.RawQuery = params.Encode()
 	}
 
-	req.Header.Add("Accept", "application/json")
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", c.token))
-
-	resp, err := c.httpClient.Do(req)
+	requestOptions := []uhttp.RequestOption{
+		uhttp.WithAcceptJSONHeader(),
+		uhttp.WithBearerToken(c.token),
+	}
+	if method == http.MethodGet {
+		requestOptions = append(requestOptions, uhttp.WithNoCache())
+	}
+	if body != nil {
+		requestOptions = append(requestOptions, uhttp.WithJSONBody(body))
+	}
+	req, err := c.httpClient.NewRequest(ctx, method, requestURL, requestOptions...)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	defer resp.Body.Close()
-
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	apiErr := &APIError{}
+	rateLimit := &v2.RateLimitDescription{}
+	doOptions := []uhttp.DoOption{
+		withZoomErrorResponse(apiErr),
+		uhttp.WithRatelimitData(rateLimit),
+	}
+	if res != nil {
+		doOptions = append(doOptions, withZoomJSONResponse(res))
 	}
 
-	if len(b) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 400 {
-		return resp, nil
+	resp, err := c.httpClient.Do(req, doOptions...)
+	if resp != nil {
+		resp.Body.Close()
 	}
 
-	if resp.StatusCode >= 400 {
-		apiErr := &APIError{StatusCode: resp.StatusCode, Body: string(b)}
-		// Decode separately so payload fields cannot overwrite HTTP metadata.
-		var envelope struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(b, &envelope); err == nil {
-			apiErr.Code = envelope.Code
-			apiErr.Message = envelope.Message
-		}
-		return nil, apiErr
-	}
-
-	if err := json.Unmarshal(b, &res); err != nil {
-		return nil, err
-	}
-
-	return resp, nil
+	annos := annotations.Annotations{}
+	annos.WithRateLimiting(rateLimit)
+	return annos, err
 }
