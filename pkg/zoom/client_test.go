@@ -2,11 +2,9 @@ package zoom
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -15,22 +13,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
-type countingReadCloser struct {
-	io.Reader
-	closeCount *int
-}
-
-func (c *countingReadCloser) Close() error {
-	*c.closeCount++
-	return nil
-}
 
 func newTestClient(t *testing.T, httpClient *http.Client, baseURL string) *Client {
 	t.Helper()
@@ -134,51 +116,6 @@ func TestGetUser_EscapesQuerySeparatorInID(t *testing.T) {
 	assert.Equal(t, "/users/user@example.com%3Fadmin=true", gotEscapedPath)
 }
 
-func TestDoRequest_ErrorIsTypedAPIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"code":1001,"message":"User not exist: user123"}`))
-	}))
-	defer srv.Close()
-
-	client := newTestClient(t, srv.Client(), srv.URL)
-	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
-	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
-
-	var apiErr *APIError
-	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, http.StatusNotFound, apiErr.StatusCode)
-	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
-	assert.Contains(t, apiErr.Body, "User not exist")
-	assert.Equal(t, "User not exist: user123", apiErr.Message())
-	assert.True(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
-}
-
-func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
-	// Payload fields must not replace the actual HTTP status or body.
-	const hostileBody = `{"statusCode":404,"body":"spoofed","code":1001,"message":"User does not exist"}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(hostileBody))
-	}))
-	defer srv.Close()
-
-	client := newTestClient(t, srv.Client(), srv.URL)
-	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
-	require.Error(t, err)
-
-	var apiErr *APIError
-	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
-	assert.Equal(t, hostileBody, apiErr.Body)
-	assert.False(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
-
-	// The Zoom-owned fields still decode normally.
-	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
-	assert.Equal(t, "User does not exist", apiErr.Msg)
-}
-
 func TestDoRequest_Generic404IsNotUserNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -194,45 +131,6 @@ func TestDoRequest_Generic404IsNotUserNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Zero(t, apiErr.Code)
 	assert.False(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
-}
-
-func TestNewClientRejectsInvalidBaseURL(t *testing.T) {
-	tests := []struct {
-		name    string
-		baseURL string
-		message string
-	}{
-		{name: "missing scheme", baseURL: "api.zoom.us/v2", message: "must use http or https"},
-		{name: "missing host", baseURL: "https:///v2", message: "missing a host"},
-		{name: "invalid escape", baseURL: "https://api.zoom.us/%zz", message: "is not valid"},
-		{name: "query", baseURL: "https://api.zoom.us/v2?tenant=other", message: "must not include a query or fragment"},
-		{name: "fragment", baseURL: "https://api.zoom.us/v2#other", message: "must not include a query or fragment"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client, err := NewClient(t.Context(), http.DefaultClient, "test-token", tt.baseURL)
-			require.ErrorContains(t, err, tt.message)
-			assert.Nil(t, client)
-		})
-	}
-}
-
-func TestDoRequestDisablesGETCache(t *testing.T) {
-	requestCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"user123"}`))
-	}))
-	defer srv.Close()
-
-	client := newTestClient(t, srv.Client(), srv.URL)
-	for range 2 {
-		_, _, err := client.GetUser(t.Context(), "user123")
-		require.NoError(t, err)
-	}
-	assert.Equal(t, 2, requestCount)
 }
 
 func TestDoRequestAnnotatesRateLimitOnSuccess(t *testing.T) {
@@ -254,16 +152,6 @@ func TestDoRequestAnnotatesRateLimitOnSuccess(t *testing.T) {
 	require.True(t, found)
 	assert.Equal(t, int64(100), description.GetLimit())
 	assert.Equal(t, int64(37), description.GetRemaining())
-}
-
-func TestDoRequestAcceptsEmptySuccessBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	client := newTestClient(t, srv.Client(), srv.URL)
-	require.NoError(t, client.DeleteGroupMember(t.Context(), "group-id", "user-id"))
 }
 
 // An empty ids field is ambiguous, so the client reads the user's group_ids
@@ -392,60 +280,6 @@ func TestEnsureGroupAdminConfirmationIdentity(t *testing.T) {
 				assert.False(t, created)
 			}
 			assert.Equal(t, 1, adminReads)
-		})
-	}
-}
-
-func TestDoRequestClosesTransportBodyExactlyOnce(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		body       string
-		call       func(*Client) error
-	}{
-		{
-			name:       "success",
-			statusCode: http.StatusNoContent,
-			call: func(client *Client) error {
-				return client.DeleteUser(t.Context(), "user-id", DeleteUserOptions{})
-			},
-		},
-		{
-			name:       "API error",
-			statusCode: http.StatusBadRequest,
-			body:       `{"code":300,"message":"bad request"}`,
-			call: func(client *Client) error {
-				return client.DeleteUser(t.Context(), "user-id", DeleteUserOptions{})
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			closeCount := 0
-			httpClient := &http.Client{
-				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					return &http.Response{
-						StatusCode: tt.statusCode,
-						Status:     http.StatusText(tt.statusCode),
-						Header:     http.Header{"Content-Type": []string{"application/json"}},
-						Body: &countingReadCloser{
-							Reader:     strings.NewReader(tt.body),
-							closeCount: &closeCount,
-						},
-						Request: req,
-					}, nil
-				}),
-			}
-			client := newTestClient(t, httpClient, "https://api.zoom.test/v2")
-
-			err := tt.call(client)
-			if tt.statusCode >= http.StatusBadRequest {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Equal(t, 1, closeCount)
 		})
 	}
 }

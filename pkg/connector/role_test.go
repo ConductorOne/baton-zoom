@@ -37,27 +37,6 @@ func roleProvisioningObjects() (*v2.Resource, *v2.Entitlement, *v2.Grant) {
 	return principal, entitlement, grant
 }
 
-func TestRoleEntitlementIsMutuallyExclusive(t *testing.T) {
-	roleResource := v2.Resource_builder{
-		Id: v2.ResourceId_builder{
-			ResourceType: resourceTypeRole.Id,
-			Resource:     "role-1",
-		}.Build(),
-	}.Build()
-	builder := roleBuilder(nil)
-
-	entitlements, _, err := builder.Entitlements(t.Context(), roleResource, resource.SyncOpAttrs{})
-	require.NoError(t, err)
-	require.Len(t, entitlements, 1)
-
-	exclusionGroup := &v2.EntitlementExclusionGroup{}
-	annos := annotations.Annotations(entitlements[0].GetAnnotations())
-	ok, err := annos.Pick(exclusionGroup)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, roleExclusionGroup, exclusionGroup.GetExclusionGroupId())
-}
-
 func TestRoleGrantsAreEmittedFromUsers(t *testing.T) {
 	builder := roleBuilder(nil)
 	role := v2.Resource_builder{
@@ -67,6 +46,17 @@ func TestRoleGrantsAreEmittedFromUsers(t *testing.T) {
 		}.Build(),
 	}.Build()
 
+	entitlements, _, err := builder.Entitlements(t.Context(), role, resource.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, entitlements, 1)
+
+	exclusionGroup := &v2.EntitlementExclusionGroup{}
+	annos := annotations.Annotations(entitlements[0].GetAnnotations())
+	ok, err := annos.Pick(exclusionGroup)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, roleExclusionGroup, exclusionGroup.GetExclusionGroupId())
+
 	grants, results, err := builder.Grants(t.Context(), role, resource.SyncOpAttrs{})
 	require.NoError(t, err)
 	assert.Empty(t, grants)
@@ -74,7 +64,7 @@ func TestRoleGrantsAreEmittedFromUsers(t *testing.T) {
 
 	skipGrants := &v2.SkipGrants{}
 	resourceTypeAnnos := annotations.Annotations(builder.ResourceType(t.Context()).GetAnnotations())
-	ok, err := resourceTypeAnnos.Pick(skipGrants)
+	ok, err = resourceTypeAnnos.Pick(skipGrants)
 	require.NoError(t, err)
 	assert.True(t, ok)
 }

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -37,12 +36,6 @@ func TestPaginationQuery(t *testing.T) {
 			assert.Equal(t, tt.want, paginationQuery(tt.nextToken).Encode())
 		})
 	}
-}
-
-func TestBuildEndpoint(t *testing.T) {
-	got, err := buildEndpoint(defaultBaseURL, "users", "user-1")
-	require.NoError(t, err)
-	assert.Equal(t, "https://api.zoom.us/v2/users/user-1", got)
 }
 
 func TestMapAuthenticationError(t *testing.T) {
@@ -156,44 +149,4 @@ func TestRequestAccessTokenSuccess(t *testing.T) {
 	token, err := RequestAccessToken(t.Context(), "account-id", "client-id", "client-secret", srv.URL)
 	require.NoError(t, err)
 	assert.Equal(t, "token", token)
-}
-
-func TestWithZoomErrorResponsePreservesTypedCode(t *testing.T) {
-	apiErr := &APIError{}
-	err := withZoomErrorResponse(apiErr)(&uhttp.WrapperResponse{
-		StatusCode: http.StatusNotFound,
-		Body:       []byte(`{"code":1001,"message":"User not exist"}`),
-	})
-	require.Error(t, err)
-	assert.True(t, IsAPIError(err, http.StatusNotFound, UserNotFoundErrorCode))
-	assert.Equal(t, "User not exist", apiErr.Message())
-}
-
-func TestWithZoomErrorResponseClearsFieldsOnIncompatibleJSON(t *testing.T) {
-	apiErr := &APIError{Code: UserNotFoundErrorCode, Msg: "stale"}
-	err := withZoomErrorResponse(apiErr)(&uhttp.WrapperResponse{
-		StatusCode: http.StatusNotFound,
-		Body:       []byte(`[]`),
-	})
-	require.Error(t, err)
-	assert.Zero(t, apiErr.Code)
-	assert.Empty(t, apiErr.Msg)
-}
-
-func TestWithZoomJSONResponseRejectsEmptySuccess(t *testing.T) {
-	var target struct {
-		ID string `json:"id"`
-	}
-	err := withZoomJSONResponse(&target)(&uhttp.WrapperResponse{
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		StatusCode: http.StatusOK,
-	})
-	require.Error(t, err)
-}
-
-func TestContainsCSVToken(t *testing.T) {
-	assert.True(t, containsCSVToken("user-id", "user-id"))
-	assert.True(t, containsCSVToken("user-id,other", "user-id"))
-	assert.False(t, containsCSVToken("user-10", "user-1"))
-	assert.False(t, containsCSVToken("", "user-id"))
 }

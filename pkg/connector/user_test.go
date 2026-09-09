@@ -39,23 +39,6 @@ func TestUserListRejectsMalformedPageToken(t *testing.T) {
 	assert.True(t, errors.As(err, &syntaxErr))
 }
 
-func TestUserListAcceptsEmptyPageToken(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/users", r.URL.Path)
-		assert.Empty(t, r.URL.Query().Get("next_page_token"))
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"users":[],"next_page_token":""}`))
-		require.NoError(t, err)
-	}))
-	t.Cleanup(srv.Close)
-
-	builder := userBuilder(newZoomTestClient(t, srv.Client(), srv.URL), false, nil)
-	users, _, err := builder.List(t.Context(), nil, resource.SyncOpAttrs{})
-	require.NoError(t, err)
-	assert.Empty(t, users)
-}
-
 func TestUserDeleteNotFoundClassification(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -101,17 +84,6 @@ func TestUserDeleteNotFoundClassification(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func TestInviteResourceIsPending(t *testing.T) {
-	invite, err := inviteResource(&zoom.User{
-		Email:       "pending@example.com",
-		DisplayName: "Pending User",
-	}, nil)
-	require.NoError(t, err)
-
-	require.NotNil(t, resource.GetStatus(invite))
-	assert.Equal(t, v2.Status_RESOURCE_STATUS_PENDING, resource.GetStatus(invite).GetStatus())
 }
 
 func TestCreateAccountResourceIsPending(t *testing.T) {

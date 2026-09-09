@@ -81,10 +81,7 @@ func TestLicenseGrantReturnsRequestedGrant(t *testing.T) {
 	}
 }
 
-// A Zoom user holds exactly one type, so assigning a tier drops the previous
-// one. C1 only removes the sibling grant when the entitlement declares an
-// exclusion group and the Grant reports which grant it replaced.
-func TestLicenseTiersAreMutuallyExclusive(t *testing.T) {
+func TestLicenseGrantReplacesPreviousTier(t *testing.T) {
 	license := v2.Resource_builder{
 		Id: v2.ResourceId_builder{
 			ResourceType: resourceTypeLicense.Id,
@@ -92,21 +89,19 @@ func TestLicenseTiersAreMutuallyExclusive(t *testing.T) {
 		}.Build(),
 		DisplayName: "Licensed",
 	}.Build()
-	builder := licenseBuilder(nil)
+	entitlementBuilder := licenseBuilder(nil)
 
-	entitlements, _, err := builder.Entitlements(t.Context(), license, resource.SyncOpAttrs{})
+	entitlements, _, err := entitlementBuilder.Entitlements(t.Context(), license, resource.SyncOpAttrs{})
 	require.NoError(t, err)
 	require.Len(t, entitlements, 1)
 
-	annos := annotations.Annotations(entitlements[0].GetAnnotations())
+	entitlementAnnos := annotations.Annotations(entitlements[0].GetAnnotations())
 	exclusion := &v2.EntitlementExclusionGroup{}
-	ok, err := annos.Pick(exclusion)
+	ok, err := entitlementAnnos.Pick(exclusion)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, licenseExclusionGroup, exclusion.GetExclusionGroupId())
-}
 
-func TestLicenseGrantReplacesPreviousTier(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/users/user-1":
@@ -123,13 +118,13 @@ func TestLicenseGrantReplacesPreviousTier(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	principal, entitlement := licenseProvisioningObjects(zoom.LicensedUser)
-	builder := licenseBuilder(newZoomTestClient(t, srv.Client(), srv.URL))
+	provisioner := licenseBuilder(newZoomTestClient(t, srv.Client(), srv.URL))
 
-	_, annos, err := builder.Grant(t.Context(), principal, entitlement)
+	_, grantAnnos, err := provisioner.Grant(t.Context(), principal, entitlement)
 	require.NoError(t, err)
 
 	replaced := &v2.GrantReplaced{}
-	ok, err := annos.Pick(replaced)
+	ok, err = grantAnnos.Pick(replaced)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, "license:1:assigned:user:user-1", replaced.GetReplacedGrantId())

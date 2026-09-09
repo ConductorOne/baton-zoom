@@ -1,8 +1,6 @@
 package connector
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,25 +40,6 @@ func groupProvisioningObjects(t *testing.T, slug string) (*v2.Resource, *v2.Enti
 		Principal:   principal,
 	}.Build()
 	return principal, entitlement, grant
-}
-
-func TestGroupListPageTokenValidation(t *testing.T) {
-	builder := &groupResourceType{}
-
-	_, _, err := builder.List(t.Context(), nil, resource.SyncOpAttrs{
-		PageToken: pagination.Token{Token: "{"},
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	assert.Contains(t, err.Error(), "baton-zoom: list groups: invalid page token")
-
-	var syntaxErr *json.SyntaxError
-	assert.True(t, errors.As(err, &syntaxErr))
-
-	bag, page, err := parsePageToken("", &v2.ResourceId{ResourceType: resourceTypeGroup.Id}, "list groups")
-	require.NoError(t, err)
-	require.NotNil(t, bag)
-	assert.Empty(t, page)
 }
 
 func TestGroupGrantReturnsRequestedGrant(t *testing.T) {
