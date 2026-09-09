@@ -1,6 +1,6 @@
 name: ci
 # Secrets: BATON_ACCOUNT_ID, BATON_ZOOM_CLIENT_ID, BATON_ZOOM_CLIENT_SECRET
-# Variables: CI_{GROUP,ROLE,LICENSE}_ENTITLEMENT, CI_{GROUP,ROLE,LICENSE}_PRINCIPAL
+# Variables: CI_{GROUP,ROLE}_ENTITLEMENT, CI_{GROUP,ROLE}_PRINCIPAL
 on: pull_request
 jobs:
   test:
@@ -38,17 +38,5 @@ jobs:
           connector: ./baton-zoom
           baton-entitlement: ${{ vars.CI_ROLE_ENTITLEMENT }}
           baton-principal: ${{ vars.CI_ROLE_PRINCIPAL }}
-          baton-principal-type: user
-          required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
-      - name: Grant/Revoke license
-        uses: ConductorOne/github-workflows/actions/sync-test@v4
-        env:
-          BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
-          BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
-          BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
-        with:
-          connector: ./baton-zoom
-          baton-entitlement: ${{ vars.CI_LICENSE_ENTITLEMENT }}
-          baton-principal: ${{ vars.CI_LICENSE_PRINCIPAL }}
           baton-principal-type: user
           required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
