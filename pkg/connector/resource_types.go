@@ -5,6 +5,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 )
 
+// LicenseResourceTypeID is the resource type ID for Zoom license tiers.
+const LicenseResourceTypeID = "license"
+
 // Zoom API granular scopes referenced by the resource type capability annotations.
 // Server-to-Server OAuth apps created today must use granular scopes; the classic
 // `user:read:admin` / `user:write:admin` are no longer accepted.
@@ -110,7 +113,7 @@ var (
 	}
 
 	resourceTypeLicense = &v2.ResourceType{
-		Id:          "license",
+		Id:          LicenseResourceTypeID,
 		DisplayName: "License",
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_LICENSE_PROFILE,
