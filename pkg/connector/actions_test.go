@@ -70,9 +70,23 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			args: map[string]any{argUserID: userIDArg("abc")},
 		},
 		{
+			name: "empty user_id resource",
+			args: map[string]any{
+				argUserID:       map[string]any{"resource_type": resourceTypeUser.Id, "resource": ""},
+				argDeleteAction: "delete",
+			},
+		},
+		{
 			name: "wrong resource_type for user_id",
 			args: map[string]any{
 				argUserID:       map[string]any{"resource_type": "group", "resource": "abc"},
+				argDeleteAction: "delete",
+			},
+		},
+		{
+			name: "missing resource_type for user_id",
+			args: map[string]any{
+				argUserID:       map[string]any{"resource": "abc"},
 				argDeleteAction: "delete",
 			},
 		},
@@ -84,11 +98,45 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "user_id is a dot segment",
+			args: map[string]any{
+				argUserID:       userIDArg(".."),
+				argDeleteAction: "delete",
+			},
+		},
+		{
+			name: "transfer_email containing a slash",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   "../accounts/me",
+				argTransferMeeting: true,
+			},
+		},
+		{
+			name: "transfer_email is a dot segment",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   ".",
+				argTransferMeeting: true,
+			},
+		},
+		{
 			name: "transfer_email without a transfer option",
 			args: map[string]any{
 				argUserID:        userIDArg("abc"),
 				argDeleteAction:  "delete",
 				argTransferEmail: "manager@example.com",
+			},
+		},
+		{
+			name: "wrong type for transfer_email",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   true,
+				argTransferMeeting: true,
 			},
 		},
 		{
@@ -101,6 +149,24 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "wrong type for transfer_webinar",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferEmail:   "manager@example.com",
+				argTransferWebinar: "true",
+			},
+		},
+		{
+			name: "wrong type for transfer_recording",
+			args: map[string]any{
+				argUserID:            userIDArg("abc"),
+				argDeleteAction:      "delete",
+				argTransferEmail:     "manager@example.com",
+				argTransferRecording: "true",
+			},
+		},
+		{
 			name: "invalid action value",
 			args: map[string]any{argUserID: userIDArg("abc"), argDeleteAction: "wipe"},
 		},
@@ -110,6 +176,22 @@ func TestTransferAndDeleteUserAction_ArgValidation(t *testing.T) {
 				argUserID:          userIDArg("abc"),
 				argDeleteAction:    "delete",
 				argTransferMeeting: true,
+			},
+		},
+		{
+			name: "transfer_webinar without transfer_email",
+			args: map[string]any{
+				argUserID:          userIDArg("abc"),
+				argDeleteAction:    "delete",
+				argTransferWebinar: true,
+			},
+		},
+		{
+			name: "transfer_recording without transfer_email",
+			args: map[string]any{
+				argUserID:            userIDArg("abc"),
+				argDeleteAction:      "delete",
+				argTransferRecording: true,
 			},
 		},
 	}

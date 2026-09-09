@@ -93,6 +93,20 @@ func TestDeleteUser_QueryParams(t *testing.T) {
 	}
 }
 
+func TestDeleteUser_DefaultsToNoQueryParams(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	err := client.DeleteUser(context.Background(), "user123", DeleteUserOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, gotQuery)
+}
+
 func TestGetUser_EscapesQuerySeparatorInID(t *testing.T) {
 	const id = "user@example.com?admin=true"
 	var gotPath, gotRawQuery, gotEscapedPath string
