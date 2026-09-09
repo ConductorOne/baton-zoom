@@ -7,6 +7,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BATON_LOG_LEVEL: debug
+      BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
+      BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
+      BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -18,10 +21,6 @@ jobs:
         run: go build ./cmd/baton-zoom
       - name: Grant/Revoke group membership
         uses: ConductorOne/github-workflows/actions/sync-test@v4
-        env:
-          BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
-          BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
-          BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
         with:
           connector: ./baton-zoom
           baton-entitlement: ${{ vars.CI_GROUP_ENTITLEMENT }}
@@ -30,10 +29,6 @@ jobs:
           required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
       - name: Grant/Revoke role membership
         uses: ConductorOne/github-workflows/actions/sync-test@v4
-        env:
-          BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
-          BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
-          BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
         with:
           connector: ./baton-zoom
           baton-entitlement: ${{ vars.CI_ROLE_ENTITLEMENT }}
