@@ -311,6 +311,34 @@ func TestEnsureGroupAdminConfirmationIdentity(t *testing.T) {
 	}
 }
 
+func TestEnsureGroupAdminRejectsRepeatedPageToken(t *testing.T) {
+	adminReads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ids":""}`))
+		case http.MethodGet:
+			adminReads++
+			_, _ = w.Write([]byte(`{"admins":[],"next_page_token":"repeat"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, _, err := newTestClient(t, srv.Client(), srv.URL).EnsureGroupAdmin(
+		t.Context(),
+		"group-id",
+		"user-id",
+		"user@example.com",
+	)
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Equal(t, 2, adminReads)
+}
+
 func TestDoRequestPreservesHTTPClassification(t *testing.T) {
 	tests := []struct {
 		name       string

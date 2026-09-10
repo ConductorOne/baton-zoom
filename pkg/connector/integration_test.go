@@ -12,6 +12,8 @@ import (
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -36,6 +38,18 @@ func TestUserResourceTypeList(t *testing.T) {
 	rs, _, err := user.List(ctx, &v2.ResourceId{}, resource.SyncOpAttrs{})
 	assert.Nil(t, err)
 	assert.NotNil(t, rs)
+}
+
+func TestLicenseGrantRejectsNonUserPrincipal(t *testing.T) {
+	principal := v2.Resource_builder{
+		Id: v2.ResourceId_builder{
+			ResourceType: resourceTypeGroup.Id,
+			Resource:     "group-id",
+		}.Build(),
+	}.Build()
+
+	_, _, err := (&licenseResourceType{}).Grant(t.Context(), principal, nil)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func getClientForTesting(ctx context.Context) (*Zoom, error) {

@@ -199,8 +199,8 @@ func (l *licenseResourceType) Grants(_ context.Context, _ *v2.Resource, _ resour
 // A pre-flight GET resolves the current tier and short-circuits with
 // GrantAlreadyExists when the target tier already matches.
 func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted a license (got %q)", principal.Id.ResourceType)
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can be granted a license"); err != nil {
+		return nil, nil, err
 	}
 
 	targetType, err := parseLicenseType(entitlement.Resource.Id.Resource)

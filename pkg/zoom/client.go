@@ -243,6 +243,7 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 
 	var token string
 	sawEmptyID := false
+	seenTokens := make(map[string]struct{})
 	for {
 		admins, nextToken, annos, err := c.GetGroupAdmins(ctx, groupId, token)
 		output.Merge(annos...)
@@ -266,6 +267,10 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 			}
 			return false, output, uhttp.WrapErrors(codes.FailedPrecondition, "zoom did not add the administrator to the group")
 		}
+		if _, ok := seenTokens[nextToken]; ok {
+			return false, output, uhttp.WrapErrors(codes.FailedPrecondition, "zoom repeated a group administrator page token")
+		}
+		seenTokens[nextToken] = struct{}{}
 		token = nextToken
 	}
 }
