@@ -179,7 +179,8 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 
 	err = g.client.DeleteGroupAdmin(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
-		if zoom.IsAPIError(err, http.StatusBadRequest, zoom.GroupAdminNotFoundErrorCode) {
+		if zoom.IsAPIError(err, http.StatusBadRequest, zoom.GroupAdminNotFoundErrorCode) ||
+			zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 		}
 		return nil, fmt.Errorf("baton-zoom: failed to remove group admin: %w", err)

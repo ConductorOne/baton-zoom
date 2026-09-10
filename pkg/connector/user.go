@@ -15,7 +15,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 )
 
@@ -204,10 +203,7 @@ func (u *userResourceType) CreateAccount(
 		// The conflict already proves the account exists. Report it as such and
 		// let the next user sync correlate the resource.
 		if zoom.IsAPIError(err, http.StatusConflict, zoom.UserAlreadyExistsErrorCode) {
-			ctxzap.Extract(ctx).Debug(
-				"baton-zoom: account already exists in Zoom",
-				zap.String("email", newUserInfo.UserInfo.Email),
-			)
+			ctxzap.Extract(ctx).Debug("baton-zoom: account already exists in Zoom")
 			return &v2.CreateAccountResponse_AlreadyExistsResult{IsCreateAccountResult: true}, nil, nil, nil
 		}
 		return nil, nil, nil, fmt.Errorf("baton-zoom: create account: %w", err)
