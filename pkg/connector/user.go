@@ -70,6 +70,9 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 		)
 	}
 
+	// Initialize: push statuses in reverse order so active is processed first.
+	// Inactive users are only included when the flag is enabled.
+	// Pending users are omitted here and synced as the Invite resource type.
 	if b.Current() == nil {
 		if u.syncInactiveUsers {
 			b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusInactive})
@@ -82,6 +85,7 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list users: %w", err)
 	}
 
+	// Advance the bag: if no next page, pop the current status state; otherwise update its token.
 	err = b.Next(nextPage)
 	if err != nil {
 		return nil, nil, err

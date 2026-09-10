@@ -79,7 +79,7 @@ func RequestAccessToken(ctx context.Context, accountId string, clientId string, 
 	return res.AccessToken, nil
 }
 
-// GetUsers returns one page from GET /v2/users.
+// GetUsers returns one page of users filtered by status from GET /v2/users.
 // Required scope: user:read:list_users:admin.
 func (c *Client) GetUsers(ctx context.Context, nextToken string, status string) ([]*User, string, annotations.Annotations, error) {
 	endpoint, err := buildEndpoint(c.baseURL, usersPath)
@@ -330,8 +330,10 @@ func (c *Client) CreateUser(ctx context.Context, newUser *UserCreationBody) (*Us
 }
 
 // DeleteUser removes a user via DELETE /v2/users/{userId} and applies the
-// optional transfer settings in opts. A zero DeleteUserOptions sends no query
-// parameters, leaving Zoom's default action. Required scope: user:delete:user:admin.
+// optional transfer settings in opts. A zero DeleteUserOptions leaves Zoom's
+// default action unchanged. Zoom requires TransferEmail when any transfer
+// flag is enabled; callers must validate that combination.
+// Required scope: user:delete:user:admin.
 func (c *Client) DeleteUser(ctx context.Context, userId string, opts DeleteUserOptions) error {
 	endpoint, err := buildEndpoint(c.baseURL, usersPath, userId)
 	if err != nil {
@@ -342,6 +344,7 @@ func (c *Client) DeleteUser(ctx context.Context, userId string, opts DeleteUserO
 }
 
 // PatchUserLicense updates a user's tier via PATCH /v2/users/{userId}.
+// Zoom returns 204 No Content on success.
 // Required scope: user:update:user:admin.
 func (c *Client) PatchUserLicense(ctx context.Context, userId string, licenseType UserType) error {
 	endpoint, err := buildEndpoint(c.baseURL, usersPath, userId)
@@ -352,7 +355,8 @@ func (c *Client) PatchUserLicense(ctx context.Context, userId string, licenseTyp
 	return err
 }
 
-// GetAccountPlanUsage returns GET /v2/accounts/me/plans/usage.
+// GetAccountPlanUsage returns base-plan purchased and consumed seat counts
+// from GET /v2/accounts/me/plans/usage.
 // Required scope: billing:read:plan_usage:admin.
 func (c *Client) GetAccountPlanUsage(ctx context.Context) (*PlanUsage, annotations.Annotations, error) {
 	endpoint, err := buildEndpoint(c.baseURL, accountsPath, mePath, plansPath, usagePath)

@@ -29,6 +29,8 @@ func main() {
 }
 
 func getConnector(ctx context.Context, cfg *config.Zoom, opts *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
+	// Pass the platform's resource-type selection so principal-side grants skip
+	// unselected targets; an empty set emits grants for all resource types.
 	var syncResourceTypes map[string]struct{}
 	if opts != nil {
 		syncResourceTypes = opts.SyncResourceTypeSet()

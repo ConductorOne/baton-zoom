@@ -12,16 +12,20 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 )
 
+// Zoom implements the Baton connector for the Zoom API.
 type Zoom struct {
 	client            *zoom.Client
 	syncInactiveUsers bool
 	syncResourceTypes map[string]struct{}
 }
 
+// NewForCapabilities creates a connector that advertises every supported capability.
 func NewForCapabilities() *Zoom {
 	return &Zoom{syncInactiveUsers: true}
 }
 
+// New creates a Zoom connector. An empty syncResourceTypes set enables
+// grants for all resource types.
 func New(
 	ctx context.Context,
 	accountId string,

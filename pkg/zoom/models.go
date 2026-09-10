@@ -30,7 +30,8 @@ const (
 	Delete       DeleteAction = "delete"
 )
 
-// APIError is Zoom's API error envelope.
+// APIError preserves HTTP response metadata while decoding Zoom's
+// structured error code and message.
 type APIError struct {
 	StatusCode int    `json:"-"`
 	Body       string `json:"-"`
@@ -46,6 +47,7 @@ type OAuthError struct {
 	Reason     string `json:"reason"`
 }
 
+// Client calls the Zoom REST API through Baton's authenticated HTTP client.
 type Client struct {
 	httpClient *uhttp.BaseHttpClient
 	token      string
@@ -67,6 +69,7 @@ type membershipMutationResponse struct {
 	IDs string `json:"ids"`
 }
 
+// PaginationData contains Zoom's standard page metadata.
 type PaginationData struct {
 	NextPageToken string `json:"next_page_token"`
 	PageSize      int    `json:"page_size"`

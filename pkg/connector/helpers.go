@@ -32,6 +32,7 @@ const (
 	adminEntitlement    = "admin"
 	assignedEntitlement = "assigned"
 
+	// Zoom encodes contact-group users as type 1; other members are nested groups.
 	contactMemberTypeUser = 1
 )
 
@@ -67,6 +68,7 @@ func parsePageToken(i string, resourceID *v2.ResourceId, operation string) (*pag
 	return b, b.PageToken(), nil
 }
 
+// willSyncResourceType treats an empty selection as all resource types.
 func willSyncResourceType(syncResourceTypes map[string]struct{}, resourceTypeID string) bool {
 	if len(syncResourceTypes) == 0 {
 		return true
