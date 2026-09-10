@@ -15,6 +15,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 )
 
@@ -125,6 +126,13 @@ func (u *userResourceType) Grants(ctx context.Context, res *v2.Resource, _ resou
 
 	user, annos, err := u.client.GetUser(ctx, res.Id.Resource)
 	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			ctxzap.Extract(ctx).Debug(
+				"baton-zoom: skipping grants for user that Zoom no longer returns",
+				zap.String("user_id", res.Id.Resource),
+			)
+			return nil, &resource.SyncOpResults{Annotations: annos}, nil
+		}
 		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list user grants: %w", err)
 	}
 

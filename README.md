@@ -85,7 +85,7 @@ baton resources
 - **Roles** — `GET /v2/roles`. Membership grants come from each user's `role_id`.
 - **Licenses** — static Basic / Licensed / Unassigned tiers from `User.type`. Seat counts use `GET /v2/accounts/me/plans/usage` when the billing scope is present.
 
-Grant emission for groups, roles, and licenses is skipped when that resource type is excluded from `--sync-resource-types`. See [`docs/doc-info.md`](docs/doc-info.md) for endpoints and filter semantics. Customer setup: [`docs/connector.mdx`](docs/connector.mdx).
+Grant emission for group members, roles, and licenses is skipped when that target type is excluded from `--sync-resource-types`. Those grants also require `user` in the filter because they are emitted from user `Grants()`. Group admin grants still come from the group builder. See [`docs/doc-info.md`](docs/doc-info.md). Customer setup: [`docs/connector.mdx`](docs/connector.mdx).
 
 # Contributing, Support, and Issues
 

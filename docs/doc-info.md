@@ -40,13 +40,13 @@ group **admin** status.
 
 | Grant | Emitted from | Zoom source | Sync filter |
 | ----- | ------------ | ----------- | ----------- |
-| Group `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `group_ids` | Emit only when the `group` resource type is selected |
-| Group `admin` | `groupBuilder.Grants` | `GET /v2/groups/{groupId}/admins` (paginated) | Group builder only runs when groups are synced |
-| Role `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `role_id` | Emit only when the `role` resource type is selected |
-| License `assigned` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `type` | Emit only when the `license` resource type is selected |
+| Group `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `group_ids` | Requires `user` *and* `group` in the filter (emitted from user Grants) |
+| Group `admin` | `groupBuilder.Grants` | `GET /v2/groups/{groupId}/admins` (paginated) | Requires `group` only |
+| Role `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `role_id` | Requires `user` *and* `role` |
+| License `assigned` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `type` | Requires `user` *and* `license` |
 | Contact group `member` | `contactGroupBuilder.Grants` | `GET /v2/contacts/groups/{id}/members` | Emit user principals only when `user` is selected and nested-group principals only when `group` is selected |
 
-Empty or nil `--sync-resource-types` means sync everything (same as before). An explicit filter must include the **target** type or the corresponding grants are omitted. When none of `group`, `role` or `license` is selected, `userBuilder.Grants` skips the per-user lookup altogether.
+Empty or nil `--sync-resource-types` means sync everything (same as before). Principal-side membership (group member, role, license) also needs `user` in the filter: those `Grants()` methods run on user resources, so `--sync-resource-types=group` lists groups and group *admins* but emits no group *members*. When none of `group`, `role` or `license` is selected, `userBuilder.Grants` skips the per-user lookup altogether.
 
 `group:read:list_members:admin` and `role:read:list_members:admin` are not required. Provisioning still uses the member write/delete scopes.
 
