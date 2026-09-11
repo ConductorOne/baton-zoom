@@ -50,8 +50,8 @@ the missing scope is in the error body. The full list this collection exercises:
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Users          | `user:read:list_users:admin`, `user:read:user:admin`, `user:write:user:admin`, `user:delete:user:admin` (`DELETE /users/{userId}` plus optional transfer query params; same scopes as `transfer_and_delete_user`)                   |
 | License tiers  | `user:read:user:admin`, **`user:update:user:admin`**, `billing:read:plan_usage:admin`                                                                                                                                             |
-| Groups         | `group:read:list_groups:admin`, `group:read:list_members:admin`, `group:read:administrator:admin`, `group:write:member:admin`, `group:delete:member:admin`, `group:write:administrator:admin`, `group:delete:administrator:admin` |
-| Roles          | `role:read:list_roles:admin`, `role:read:list_members:admin`, `role:write:member:admin`, `role:delete:member:admin`                                                                                                               |
+| Groups         | `group:read:list_groups:admin`, `group:read:administrator:admin`, `group:write:member:admin`, `group:delete:member:admin`, `group:write:administrator:admin`, `group:delete:administrator:admin` |
+| Roles          | `role:read:list_roles:admin`, `role:write:member:admin`, `role:delete:member:admin`                                                                                                               |
 | Contact groups | `contact_group:read:list_groups:admin`, `contact_group:read:list_members:admin`                                                                                                                                                   |
 | Invites        | `user:read:list_users:admin`                                                                                                                                                                                                      |
 
@@ -68,8 +68,8 @@ the missing scope is in the error body. The full list this collection exercises:
 
 | Collection folder | Connector resource type    | Connector files                 |
 | ----------------- | -------------------------- | ------------------------------- |
-| Users             | `user`                     | `pkg/connector/user.go`         |
-| License tiers     | `license` (NEW — CXH-1571) | `pkg/connector/license.go`      |
+| Users             | `user`                     | `pkg/connector/user.go` — `GET /users/{userId}` supplies `group_ids`, `role_id`, and `type` for grants |
+| License tiers     | `license`                  | `pkg/connector/license.go`                                                                      |
 | Groups            | `group`                    | `pkg/connector/group.go`        |
 | Roles             | `role`                     | `pkg/connector/role.go`         |
 | Contact groups    | `contactGroup`             | `pkg/connector/contactGroup.go` |

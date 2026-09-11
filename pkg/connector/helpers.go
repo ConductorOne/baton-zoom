@@ -1,90 +1,127 @@
 package connector
 
 import (
+	"context"
 	"fmt"
-	"net/http"
-	"strconv"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
 	firstNameKey       = "first_name"
 	lastNameKey        = "last_name"
+	displayNameKey     = "display_name"
+	emailKey           = "email"
+	loginKey           = "login"
+	userIDKey          = "user_id"
+	userTypeProfileKey = "type"
+
 	userStatusActive   = "active"
 	userStatusInactive = "inactive"
+	userStatusPending  = "pending"
+
+	memberEntitlement   = "member"
+	adminEntitlement    = "admin"
+	assignedEntitlement = "assigned"
+
+	// Zoom encodes contact-group users as type 1; other members are nested groups.
+	contactMemberTypeUser = 1
 )
 
-func parsePageToken(i string, resourceID *v2.ResourceId) (*pagination.Bag, string, error) {
+func userTraitStatus(status string) v2.Status_ResourceStatus {
+	switch status {
+	case userStatusActive:
+		return v2.Status_RESOURCE_STATUS_ENABLED
+	case userStatusInactive:
+		return v2.Status_RESOURCE_STATUS_DISABLED
+	case userStatusPending:
+		return v2.Status_RESOURCE_STATUS_PENDING
+	default:
+		return v2.Status_RESOURCE_STATUS_UNSPECIFIED
+	}
+}
+
+func parsePageToken(i string, resourceID *v2.ResourceId, operation string) (*pagination.Bag, string, error) {
 	b := &pagination.Bag{}
 	err := b.Unmarshal(i)
 	if err != nil {
-		return nil, "", err
+		return nil, "", uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: %s: invalid page token", operation),
+			err,
+		)
 	}
-
 	if b.Current() == nil {
 		b.Push(pagination.PageState{
 			ResourceTypeID: resourceID.ResourceType,
 			ResourceID:     resourceID.Resource,
 		})
 	}
-
 	return b, b.PageToken(), nil
 }
 
-// extractRateLimitData returns a set of annotations for rate limiting given the rate limit headers provided by Zoom.
-func extractRateLimitData(response *http.Response) (*v2.RateLimitDescription, error) {
-	if response == nil {
-		return nil, fmt.Errorf("zoom-connector: passed nil response")
+// willSyncResourceType treats an empty selection as all resource types.
+func willSyncResourceType(syncResourceTypes map[string]struct{}, resourceTypeID string) bool {
+	if len(syncResourceTypes) == 0 {
+		return true
 	}
-	var err error
-
-	var r int64
-	remaining := response.Header.Get("X-Ratelimit-Remaining")
-	if remaining != "" {
-		r, err = strconv.ParseInt(remaining, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse ratelimit-remaining: %w", err)
-		}
-	}
-
-	var l int64
-	limit := response.Header.Get("X-Ratelimit-Limit")
-	if limit != "" {
-		l, err = strconv.ParseInt(limit, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse ratelimit-limit: %w", err)
-		}
-	}
-
-	var ra *timestamppb.Timestamp
-	resetAt := response.Header.Get("Retry-After")
-	if resetAt != "" {
-		ts, err := strconv.ParseInt(resetAt, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse ratelimit-reset: %w", err)
-		}
-		ra = &timestamppb.Timestamp{Seconds: ts}
-	}
-
-	return &v2.RateLimitDescription{
-		Limit:     l,
-		Remaining: r,
-		ResetAt:   ra,
-	}, nil
+	_, ok := syncResourceTypes[resourceTypeID]
+	return ok
 }
 
-func parseResp(resp *http.Response) (annotations.Annotations, error) {
-	var annos annotations.Annotations
+func nextBagToken(bag *pagination.Bag, nextToken string) (string, error) {
+	if nextToken == "" {
+		return "", nil
+	}
+	return bag.NextToken(nextToken)
+}
 
-	if resp != nil {
-		if desc, err := extractRateLimitData(resp); err == nil {
-			annos.WithRateLimiting(desc)
+func requireUserPrincipal(ctx context.Context, principal *v2.Resource, message string) error {
+	if principal.Id.ResourceType == resourceTypeUser.Id {
+		return nil
+	}
+	ctxzap.Extract(ctx).Debug(
+		message,
+		zap.String("principal_type", principal.Id.ResourceType),
+		zap.String("principal_id", principal.Id.Resource),
+	)
+	return status.Error(codes.InvalidArgument, message)
+}
+
+func groupEntitlementSlug(entitlementID string) (string, error) {
+	parts := strings.Split(entitlementID, ":")
+	if len(parts) < 3 {
+		return "", fmt.Errorf("invalid entitlement ID format %q", entitlementID)
+	}
+	slug := parts[len(parts)-1]
+	switch slug {
+	case memberEntitlement, adminEntitlement:
+		return slug, nil
+	default:
+		return "", fmt.Errorf("unknown group entitlement %q (valid: %s, %s)", slug, memberEntitlement, adminEntitlement)
+	}
+}
+
+func primaryEmail(res *v2.Resource) string {
+	userTrait, err := resource.GetUserTrait(res)
+	if err != nil || userTrait == nil {
+		return ""
+	}
+	for _, email := range userTrait.GetEmails() {
+		if email.GetIsPrimary() {
+			return email.GetAddress()
 		}
 	}
-
-	return annos, nil
+	if emails := userTrait.GetEmails(); len(emails) > 0 {
+		return emails[0].GetAddress()
+	}
+	return ""
 }

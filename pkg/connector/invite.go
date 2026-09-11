@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -19,11 +20,11 @@ func (i *inviteResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // inviteResource creates a connector resource for a pending Zoom user (invite).
 // Pending users have no Zoom ID yet, so the email is used as the stable resource identifier.
-func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func inviteResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	profile := map[string]any{
 		firstNameKey: user.FirstName,
 		lastNameKey:  user.LastName,
-		"login":      user.Email,
+		loginKey:     user.Email,
 	}
 
 	userTraitOptions := []resource.UserTraitOption{
@@ -37,7 +38,7 @@ func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resour
 		userTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
-		resource.WithResourceStatus(v2.Status_RESOURCE_STATUS_UNSPECIFIED, ""),
+		resource.WithResourceStatus(v2.Status_RESOURCE_STATUS_PENDING, ""),
 	)
 	if err != nil {
 		return nil, err
@@ -47,25 +48,14 @@ func inviteResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resour
 }
 
 func (i *inviteResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var rv []*v2.Resource
-
-	users, nextPage, resp, err := i.client.GetUsers(ctx, opts.PageToken.Token, "pending")
+	users, nextPage, annos, err := i.client.GetUsers(ctx, opts.PageToken.Token, userStatusPending)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list pending invitations: %w", err)
 	}
 
+	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		userCopy := user
-		ur, err := inviteResource(userCopy, parentId)
+		ur, err := inviteResource(user, parentId)
 		if err != nil {
 			return nil, nil, err
 		}
