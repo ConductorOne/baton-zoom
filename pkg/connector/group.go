@@ -10,9 +10,9 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	resource "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type groupResourceType struct {
@@ -80,6 +80,8 @@ func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ re
 	return rv, &resource.SyncOpResults{}, nil
 }
 
+// Grants emits group-admin assignments. Member grants are emitted from
+// user.Grants using GET /v2/users/{id} group_ids.
 func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{
 		ResourceType: resourceTypeGroup.Id,
@@ -122,11 +124,11 @@ func (g *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 
 	slug, err := groupEntitlementSlug(entitlement.GetId())
 	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "baton-zoom: %v", err)
+		return nil, nil, uhttp.WrapErrors(codes.InvalidArgument, "baton-zoom: invalid group entitlement", err)
 	}
 
 	grants := []*v2.Grant{
-		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+		grant.NewGrant(entitlement.GetResource(), slug, principal.GetId()),
 	}
 	groupID := entitlement.Resource.Id.Resource
 	userID := principal.Id.Resource
@@ -162,7 +164,7 @@ func (g *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 
 	slug, err := groupEntitlementSlug(entitlement.GetId())
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "baton-zoom: %v", err)
+		return nil, uhttp.WrapErrors(codes.InvalidArgument, "baton-zoom: invalid group entitlement", err)
 	}
 
 	if slug == memberEntitlement {

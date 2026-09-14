@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"google.golang.org/grpc/codes"
 )
@@ -175,7 +176,21 @@ func withZoomJSONResponse(target any) uhttp.DoOption {
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return nil
 		}
+		if len(resp.Body) == 0 {
+			return nil
+		}
 		return uhttp.WithJSONResponse(target)(resp)
+	}
+}
+
+// withBestEffortRateLimitData annotates Zoom's rate-limit headers when they
+// parse, and never fails a successful response over an unparseable value
+// (Zoom can send X-RateLimit-Limit: unlimited).
+func withBestEffortRateLimitData(resource *v2.RateLimitDescription) uhttp.DoOption {
+	inner := uhttp.WithRatelimitData(resource)
+	return func(resp *uhttp.WrapperResponse) error {
+		_ = inner(resp)
+		return nil
 	}
 }
 

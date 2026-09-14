@@ -425,3 +425,59 @@ func TestDoRequest_ErrorBodyCannotSpoofStatusOrBody(t *testing.T) {
 	assert.Equal(t, UserNotFoundErrorCode, apiErr.Code)
 	assert.Equal(t, "User does not exist", apiErr.Msg)
 }
+
+func TestDoRequest_EmptySuccessBodyDoesNotFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	_, err := client.CreateUser(t.Context(), &UserCreationBody{
+		UserInfo: UserCreationInfo{Email: "user@example.com"},
+	})
+	require.NoError(t, err)
+}
+
+func TestDoRequest_UnparseableRateLimitHeaderDoesNotFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-RateLimit-Limit", "unlimited")
+		w.Header().Set("X-RateLimit-Remaining", "37")
+		_, _ = w.Write([]byte(`{"id":"user123"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.Client(), srv.URL)
+	user, _, err := client.GetUser(t.Context(), "user123")
+	require.NoError(t, err)
+	assert.Equal(t, "user123", user.ID)
+}
+
+func TestDeleteGroupMemberMapsMissingMemberPairing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":4131,"message":"Group member not found"}`))
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv.Client(), srv.URL).DeleteGroupMember(t.Context(), "group-id", "user-id")
+	require.Error(t, err)
+	assert.True(t, IsAPIError(err, http.StatusNotFound, GroupMemberNotFoundErrorCode))
+	assert.False(t, IsAPIError(err, http.StatusBadRequest, GroupMemberNotFoundErrorCode))
+}
+
+func TestDeleteGroupAdminMapsMissingAdminPairing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":4138,"message":"User is not a group admin"}`))
+	}))
+	defer srv.Close()
+
+	err := newTestClient(t, srv.Client(), srv.URL).DeleteGroupAdmin(t.Context(), "group-id", "user-id")
+	require.Error(t, err)
+	assert.True(t, IsAPIError(err, http.StatusBadRequest, GroupAdminNotFoundErrorCode))
+	assert.False(t, IsAPIError(err, http.StatusNotFound, GroupAdminNotFoundErrorCode))
+}

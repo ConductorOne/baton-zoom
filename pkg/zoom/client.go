@@ -407,7 +407,7 @@ func (c *Client) doRequest(ctx context.Context, rawURL string, res any, method s
 	rateLimit := &v2.RateLimitDescription{}
 	doOptions := []uhttp.DoOption{
 		withZoomErrorResponse(apiErr),
-		uhttp.WithRatelimitData(rateLimit),
+		withBestEffortRateLimitData(rateLimit),
 	}
 	if res != nil {
 		doOptions = append(doOptions, withZoomJSONResponse(res))

@@ -209,7 +209,7 @@ func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource,
 	}
 
 	result := []*v2.Grant{
-		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+		grant.NewGrant(entitlement.GetResource(), assignedEntitlement, principal.GetId()),
 	}
 
 	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)

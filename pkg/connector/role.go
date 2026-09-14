@@ -71,6 +71,7 @@ func (r *roleResourceType) Entitlements(_ context.Context, res *v2.Resource, _ r
 	}, &resource.SyncOpResults{}, nil
 }
 
+// Grants is a no-op: role membership is emitted from user.Grants.
 func (r *roleResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	return nil, nil, nil
 }
@@ -81,7 +82,7 @@ func (r *roleResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	}
 
 	result := []*v2.Grant{
-		grant.NewGrant(entitlement.GetResource(), entitlement.GetSlug(), principal.GetId()),
+		grant.NewGrant(entitlement.GetResource(), memberEntitlement, principal.GetId()),
 	}
 
 	user, _, err := r.client.GetUser(ctx, principal.Id.Resource)

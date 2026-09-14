@@ -150,3 +150,13 @@ func TestRequestAccessTokenSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "token", token)
 }
+
+func TestIsAPIErrorRequiresMatchingStatusAndCode(t *testing.T) {
+	member := &APIError{StatusCode: http.StatusNotFound, Code: GroupMemberNotFoundErrorCode}
+	admin := &APIError{StatusCode: http.StatusBadRequest, Code: GroupAdminNotFoundErrorCode}
+
+	assert.True(t, IsAPIError(member, http.StatusNotFound, GroupMemberNotFoundErrorCode))
+	assert.False(t, IsAPIError(member, http.StatusBadRequest, GroupMemberNotFoundErrorCode))
+	assert.True(t, IsAPIError(admin, http.StatusBadRequest, GroupAdminNotFoundErrorCode))
+	assert.False(t, IsAPIError(admin, http.StatusNotFound, GroupAdminNotFoundErrorCode))
+}
