@@ -26,8 +26,6 @@ This connector works with Zoom on the Pro, Business, Business Plus, or Enterpris
 
 {/* AUTO-GENERATED:END - capabilities */}
 
-C1 reads each Zoom user's groups, role, and license tier from `GET /v2/users/{userId}` during the user grants pass. The account profile retains the Zoom license `type`, but does not store group or role membership. Group administrator assignments come from each group's administrator list. Zoom does not expose a `/licenses` endpoint, so license tiers are modeled from each user's Zoom license type.
-
 When a resource type is excluded from the connector's sync, C1 does not emit grants that target it.
 
 Invites represent pending Zoom user invitations and are transient — they disappear once the invitee accepts. C1 syncs invites for visibility but skips sync anomaly detection on them, since their counts naturally fluctuate.
