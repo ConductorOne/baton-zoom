@@ -154,7 +154,9 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 	var purchased, consumed int64
 	usage, annos, err := l.client.GetAccountPlanUsage(ctx)
 	if err != nil {
-		if status.Code(err) != codes.PermissionDenied {
+		scopeUnavailable := status.Code(err) == codes.PermissionDenied ||
+			zoom.IsAPIErrorCode(err, zoom.MissingScopeErrorCode)
+		if !scopeUnavailable {
 			return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf(
 				"baton-zoom: list licenses: failed to fetch plan usage: %w",
 				err,

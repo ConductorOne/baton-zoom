@@ -56,6 +56,8 @@ const (
 	GroupMemberNotFoundErrorCode = 4131
 	// GroupAdminNotFoundErrorCode is Zoom's API error code when the user is not a group admin.
 	GroupAdminNotFoundErrorCode = 4138
+	// MissingScopeErrorCode is Zoom's API error code when an access token lacks a required scope.
+	MissingScopeErrorCode = 4711
 )
 
 var _ uhttp.ErrorResponse = (*APIError)(nil)
@@ -200,6 +202,12 @@ func IsAPIError(err error, statusCode, code int) bool {
 	return errors.As(err, &apiErr) &&
 		apiErr.StatusCode == statusCode &&
 		apiErr.Code == code
+}
+
+// IsAPIErrorCode reports whether err contains the specified Zoom API error code.
+func IsAPIErrorCode(err error, code int) bool {
+	apiErr := &APIError{}
+	return errors.As(err, &apiErr) && apiErr.Code == code
 }
 
 // idsBody builds Zoom's collection mutation payload.

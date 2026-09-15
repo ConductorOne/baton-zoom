@@ -160,3 +160,10 @@ func TestIsAPIErrorRequiresMatchingStatusAndCode(t *testing.T) {
 	assert.True(t, IsAPIError(admin, http.StatusBadRequest, GroupAdminNotFoundErrorCode))
 	assert.False(t, IsAPIError(admin, http.StatusNotFound, GroupAdminNotFoundErrorCode))
 }
+
+func TestIsAPIErrorCodeMatchesWrappedErrorRegardlessOfStatus(t *testing.T) {
+	scopeErr := &APIError{StatusCode: http.StatusBadRequest, Code: MissingScopeErrorCode}
+
+	assert.True(t, IsAPIErrorCode(errors.Join(errors.New("request failed"), scopeErr), MissingScopeErrorCode))
+	assert.False(t, IsAPIErrorCode(scopeErr, UserNotFoundErrorCode))
+}

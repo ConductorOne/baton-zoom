@@ -78,7 +78,7 @@ baton resources
 
 `baton-zoom` syncs the following Zoom resources:
 
-- **Users** — `GET /v2/users`, plus `GET /v2/users/{userId}` during grant emission. The C1 profile retains the Zoom license `type`; group membership, role assignment, and license grants come from `group_ids`, `role_id`, and `type` returned by the per-user request.
+- **Users** — `GET /v2/users`. The C1 profile retains `group_ids`, `role_id`, and `type`; user `Grants()` emits group membership, role assignment, and license grants from those stored list fields without a per-user detail request.
 - **Invites** — pending users (`GET /v2/users?status=pending`).
 - **Groups** — `GET /v2/groups`. Member grants come from user `group_ids`. Admin grants come from `GET /v2/groups/{groupId}/admins`.
 - **Contact Groups** — `GET /v2/contacts/groups` and `GET /v2/contacts/groups/{id}/members` (read-only).

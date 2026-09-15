@@ -68,7 +68,7 @@ the missing scope is in the error body. The full list this collection exercises:
 
 | Collection folder | Connector resource type    | Connector files                 |
 | ----------------- | -------------------------- | ------------------------------- |
-| Users             | `user`                     | `pkg/connector/user.go` — `GET /users/{userId}` supplies `group_ids`, `role_id`, and `type` for grants |
+| Users             | `user`                     | `pkg/connector/user.go` — `GET /users` supplies `group_ids`, `role_id`, and `type` persisted for grants |
 | License tiers     | `license`                  | `pkg/connector/license.go`                                                                      |
 | Groups            | `group`                    | `pkg/connector/group.go`        |
 | Roles             | `role`                     | `pkg/connector/role.go`         |

@@ -8,7 +8,7 @@ While developing the connector, please fill out this form. This information is n
 
 | Resource           | Trait                   | Notes                                                                                                                                                                                                                                        |
 | ------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Users**          | `TRAIT_USER`            | `GET /v2/users`. Inactive users included when `--sync-inactive-users` is set. The existing `type` profile field is preserved; `GET /v2/users/{userId}` supplies `group_ids`, `role_id`, and `type` for grant emission.                     |
+| **Users**          | `TRAIT_USER`            | `GET /v2/users`. Inactive users included when `--sync-inactive-users` is set. The profile retains `group_ids`, `role_id`, and `type` from the list response for grant emission.                                                               |
 | **Invites**        | `TRAIT_USER`            | Pending users (`status=pending`). No native ID yet — synced as a separate type.                                                                                                                                                              |
 | **Groups**         | `TRAIT_GROUP`           | `GET /v2/groups`. Member grants come from each user's `group_ids`. Admin grants come from `GET /v2/groups/{groupId}/admins`. Both entitlements remain provisionable.                                                                         |
 | **Contact Groups** | `TRAIT_GROUP`           | Read-only. Membership includes both users and nested user-groups (`GET /v2/contacts/groups/{id}/members`).                                                                                                                                   |
@@ -32,21 +32,22 @@ Contact Groups are intentionally **read-only** (no membership write endpoints ar
 
 ### Grant emission
 
-Group, role and license memberships are emitted from the **principal** side:
-`GET /v2/users/{userId}` returns `group_ids`, `role_id` and `type` together, so
-one lookup per user covers all three and the group and role builders never
-rescan every member to invert the relationship. There is no user-side field for
-group **admin** status.
+Group, role and license memberships are emitted from the **principal** side.
+`GET /v2/users` returns `group_ids`, `role_id` and `type`; `List()` persists
+those fields on each user resource and `userBuilder.Grants` reads them without
+another API call. The group and role builders therefore never rescan every
+member to invert the relationship. There is no user-side field for group
+**admin** status.
 
 | Grant | Emitted from | Zoom source | Sync filter |
 | ----- | ------------ | ----------- | ----------- |
-| Group `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `group_ids` | Requires `user` *and* `group` in the filter (emitted from user Grants) |
+| Group `member` | `userBuilder.Grants` | Stored `GET /v2/users` → `group_ids` | Requires `user` *and* `group` in the filter (emitted from user Grants) |
 | Group `admin` | `groupBuilder.Grants` | `GET /v2/groups/{groupId}/admins` (paginated) | Requires `group` only |
-| Role `member` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `role_id` | Requires `user` *and* `role` |
-| License `assigned` | `userBuilder.Grants` | `GET /v2/users/{userId}` → `type` | Requires `user` *and* `license` |
+| Role `member` | `userBuilder.Grants` | Stored `GET /v2/users` → `role_id` | Requires `user` *and* `role` |
+| License `assigned` | `userBuilder.Grants` | Stored `GET /v2/users` → `type` | Requires `user` *and* `license` |
 | Contact group `member` | `contactGroupBuilder.Grants` | `GET /v2/contacts/groups/{id}/members` | Emit user principals only when `user` is selected and nested-group principals only when `group` is selected |
 
-Empty or nil `--sync-resource-types` means sync everything (same as before). Principal-side membership (group member, role, license) also needs `user` in the filter: those `Grants()` methods run on user resources, so `--sync-resource-types=group` lists groups and group *admins* but emits no group *members*. When none of `group`, `role` or `license` is selected, `userBuilder.Grants` skips the per-user lookup altogether.
+Empty or nil `--sync-resource-types` means sync everything (same as before). Principal-side membership (group member, role, license) also needs `user` in the filter: those `Grants()` methods run on user resources, so `--sync-resource-types=group` lists groups and group *admins* but emits no group *members*. When none of `group`, `role` or `license` is selected, `userBuilder.Grants` returns without reading grant inputs.
 
 `group:read:list_members:admin` and `role:read:list_members:admin` are not required. Provisioning still uses the member write/delete scopes.
 

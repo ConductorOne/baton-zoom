@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,6 +20,7 @@ func TestLicenseListPlanUsageErrors(t *testing.T) {
 	tests := []struct {
 		name          string
 		statusCode    int
+		apiCode       int
 		wantCode      codes.Code
 		wantResources int
 	}{
@@ -27,6 +29,19 @@ func TestLicenseListPlanUsageErrors(t *testing.T) {
 			statusCode:    http.StatusForbidden,
 			wantCode:      codes.OK,
 			wantResources: len(licenseDefinitions),
+		},
+		{
+			name:          "zoom missing-scope error omits seat counts",
+			statusCode:    http.StatusBadRequest,
+			apiCode:       zoom.MissingScopeErrorCode,
+			wantCode:      codes.OK,
+			wantResources: len(licenseDefinitions),
+		},
+		{
+			name:       "unrelated bad request is propagated",
+			statusCode: http.StatusBadRequest,
+			apiCode:    1234,
+			wantCode:   codes.InvalidArgument,
 		},
 		{
 			name:       "rate limit failure is propagated",
@@ -48,7 +63,9 @@ func TestLicenseListPlanUsageErrors(t *testing.T) {
 				assert.Equal(t, "/accounts/me/plans/usage", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.statusCode)
-				_, _ = w.Write([]byte(`{"code":1234,"message":"test failure"}`))
+				if _, err := fmt.Fprintf(w, `{"code":%d,"message":"test failure"}`, tt.apiCode); err != nil {
+					t.Errorf("write response: %v", err)
+				}
 			}))
 			t.Cleanup(server.Close)
 
