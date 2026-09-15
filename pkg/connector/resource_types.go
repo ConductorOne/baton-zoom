@@ -5,6 +5,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 )
 
+// LicenseResourceTypeID is the resource type ID for Zoom license tiers.
+const LicenseResourceTypeID = "license"
+
 // Zoom API granular scopes referenced by the resource type capability annotations.
 // Server-to-Server OAuth apps created today must use granular scopes; the classic
 // `user:read:admin` / `user:write:admin` are no longer accepted.
@@ -13,11 +16,6 @@ import (
 // `user:write:user:admin` only authorizes POST /v2/users (create);
 // PATCH /v2/users/{userId} (used for license tier updates) requires
 // the separate `user:update:user:admin` scope.
-// LicenseResourceTypeID is exported because main.go uses it with
-// cli.ConnectorOpts.WillSyncResourceType to decide whether license grants
-// should be emitted from the user syncer.
-const LicenseResourceTypeID = "license"
-
 const (
 	scopeUserReadList = "user:read:list_users:admin"
 	scopeUserRead     = "user:read:user:admin"
@@ -42,9 +40,6 @@ var (
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_USER,
 		},
-		// userBuilder clones this and adds SkipEntitlements by default, or
-		// SkipEntitlementsAndGrants when licenses aren't being synced. Any
-		// annotations declared here are preserved on the clone.
 		Annotations: annotations.New(
 			capabilityPermissions(
 				scopeUserRead,
@@ -52,6 +47,7 @@ var (
 				scopeUserWrite,
 				scopeUserDelete,
 			),
+			&v2.SkipEntitlements{},
 		),
 	}
 
@@ -64,7 +60,6 @@ var (
 		Annotations: annotations.New(
 			capabilityPermissions(
 				"group:read:list_groups:admin",
-				"group:read:list_members:admin",
 				"group:read:administrator:admin",
 				"group:write:member:admin",
 				"group:delete:member:admin",
@@ -110,10 +105,10 @@ var (
 		Annotations: annotations.New(
 			capabilityPermissions(
 				"role:read:list_roles:admin",
-				"role:read:list_members:admin",
 				"role:write:member:admin",
 				"role:delete:member:admin",
 			),
+			&v2.SkipGrants{},
 		),
 	}
 

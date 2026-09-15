@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -11,21 +12,17 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
-	"google.golang.org/protobuf/proto"
-)
-
-const (
-	// userTypeProfileKey carries the user's Zoom license tier (User.type) on
-	// the resource profile so userBuilder.Grants can emit the principal-side
-	// license grant without an extra GET /v2/users/{id} call.
-	userTypeProfileKey = "type"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"google.golang.org/grpc/codes"
 )
 
 type userResourceType struct {
 	resourceType      *v2.ResourceType
 	client            *zoom.Client
 	syncInactiveUsers bool
+	syncResourceTypes map[string]struct{}
 }
 
 func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
@@ -33,24 +30,20 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 // Create a new connector resource for a Zoom user.
-func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func userResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+	groupIDs := make([]any, 0, len(user.GroupIDs))
+	for _, groupID := range user.GroupIDs {
+		groupIDs = append(groupIDs, groupID)
+	}
+
 	profile := map[string]any{
 		firstNameKey:       user.FirstName,
 		lastNameKey:        user.LastName,
-		"login":            user.Email,
-		"user_id":          user.ID,
+		loginKey:           user.Email,
+		userIDKey:          user.ID,
 		userTypeProfileKey: int64(user.Type),
-	}
-
-	var userStatus v2.Status_ResourceStatus
-
-	switch user.Status {
-	case userStatusInactive:
-		userStatus = v2.Status_RESOURCE_STATUS_DISABLED
-	case userStatusActive:
-		userStatus = v2.Status_RESOURCE_STATUS_ENABLED
-	default:
-		userStatus = v2.Status_RESOURCE_STATUS_UNSPECIFIED
+		userRoleProfileKey: user.RoleID,
+		userGroupIDsKey:    groupIDs,
 	}
 
 	userTraitTraitOptions := []resource.UserTraitOption{
@@ -64,7 +57,7 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 		userTraitTraitOptions,
 		resource.WithParentResourceID(parentResourceID),
 		resource.WithResourceProfile(profile),
-		resource.WithResourceStatus(userStatus, ""),
+		resource.WithResourceStatus(userTraitStatus(user.Status), ""),
 	)
 	if err != nil {
 		return nil, err
@@ -74,17 +67,19 @@ func userResource(user zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource
 }
 
 func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, opts resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
-	var rv []*v2.Resource
-
 	b := &pagination.Bag{}
 	err := b.Unmarshal(opts.PageToken.Token)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, uhttp.WrapErrors(
+			codes.InvalidArgument,
+			"baton-zoom: list users: invalid page token",
+			err,
+		)
 	}
 
 	// Initialize: push statuses in reverse order so active is processed first.
 	// Inactive users are only included when the flag is enabled.
-	// Pending users are omitted — they have no ID yet and are synced via the Invite resource type.
+	// Pending users are omitted here and synced as the Invite resource type.
 	if b.Current() == nil {
 		if u.syncInactiveUsers {
 			b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusInactive})
@@ -92,37 +87,24 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 		b.Push(pagination.PageState{ResourceTypeID: resourceTypeUser.Id, ResourceID: userStatusActive})
 	}
 
-	status := b.Current().ResourceID
-	page := b.PageToken()
-
-	users, nextPage, resp, err := u.client.GetUsers(ctx, page, status)
+	users, nextPage, annos, err := u.client.GetUsers(ctx, b.PageToken(), b.Current().ResourceID)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		return nil, nil, err
+		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list users: %w", err)
 	}
-	defer resp.Body.Close()
 
-	// Advance the bag: if no next page, pops the current status state; otherwise updates its token.
+	// Advance the bag: if no next page, pop the current status state; otherwise update its token.
 	err = b.Next(nextPage)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	pageToken, err := b.Marshal()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
+	rv := make([]*v2.Resource, 0, len(users))
 	for _, user := range users {
-		userCopy := user
-		ur, err := userResource(userCopy, parentId)
+		ur, err := userResource(user, parentId)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -133,51 +115,66 @@ func (u *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, op
 }
 
 func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
-	return nil, &resource.SyncOpResults{}, nil
+	return nil, nil, nil
 }
 
-// Grants emits the principal-side license grant for a single user resource.
-// License is a derived resource type (no /licenses endpoint in Zoom), so its
-// grants are produced from the user side using the User.type value stashed in
-// the resource profile during List(). Values outside the modeled tiers
-// yield no grant — the matching License resource was never listed, so
-// emitting one would dangle.
+// Grants emits group, role and license memberships from the fields persisted by
+// List. The group and role builders do not rescan every member, and Grants does
+// not re-fetch each user.
 func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
-	profile := resource.GetProfile(res).AsMap()
-	rawType, ok := profile[userTypeProfileKey]
-	if !ok {
-		return nil, &resource.SyncOpResults{}, nil
+	syncGroups := willSyncResourceType(u.syncResourceTypes, resourceTypeGroup.Id)
+	syncRoles := willSyncResourceType(u.syncResourceTypes, resourceTypeRole.Id)
+	syncLicenses := willSyncResourceType(u.syncResourceTypes, resourceTypeLicense.Id)
+	if !syncGroups && !syncRoles && !syncLicenses {
+		return nil, nil, nil
 	}
 
-	// structpb decodes JSON numbers as float64; the int / int64 branches
-	// cover the unlikely path where the profile is constructed in-process
-	// without going through a JSON round-trip.
-	var userType int
-	switch v := rawType.(type) {
-	case float64:
-		userType = int(v)
-	case int:
-		userType = v
-	case int64:
-		userType = int(v)
-	default:
-		return nil, &resource.SyncOpResults{}, nil
+	profile := resource.GetProfile(res)
+	var grants []*v2.Grant
+
+	if syncGroups {
+		groupIDs := profile.GetFields()[userGroupIDsKey].GetListValue()
+		for _, value := range groupIDs.GetValues() {
+			groupID := value.GetStringValue()
+			if groupID == "" {
+				continue
+			}
+			grants = append(grants, grant.NewGrant(
+				grantResource(resourceTypeGroup.Id, groupID),
+				memberEntitlement,
+				res.Id,
+			))
+		}
 	}
 
-	if !isLicenseTier(zoom.UserType(userType)) {
-		return nil, &resource.SyncOpResults{}, nil
+	roleID, _ := resource.GetProfileStringValue(profile, userRoleProfileKey)
+	if syncRoles && roleID != "" {
+		grants = append(grants, grant.NewGrant(
+			grantResource(resourceTypeRole.Id, roleID),
+			memberEntitlement,
+			res.Id,
+		))
 	}
 
-	licenseResource := &v2.Resource{
+	userType, hasUserType := resource.GetProfileInt64Value(profile, userTypeProfileKey)
+	if syncLicenses && hasUserType && isLicenseTier(zoom.UserType(userType)) {
+		grants = append(grants, grant.NewGrant(
+			grantResource(resourceTypeLicense.Id, strconv.FormatInt(userType, 10)),
+			assignedEntitlement,
+			res.Id,
+		))
+	}
+
+	return grants, nil, nil
+}
+
+func grantResource(resourceTypeID, resourceID string) *v2.Resource {
+	return &v2.Resource{
 		Id: &v2.ResourceId{
-			ResourceType: resourceTypeLicense.Id,
-			Resource:     strconv.Itoa(userType),
+			ResourceType: resourceTypeID,
+			Resource:     resourceID,
 		},
 	}
-
-	return []*v2.Grant{
-		grant.NewGrant(licenseResource, assignedEntitlement, res.Id),
-	}, &resource.SyncOpResults{}, nil
 }
 
 // isLicenseTier reports whether the given Zoom user type maps to a License
@@ -213,15 +210,23 @@ func (u *userResourceType) CreateAccount(
 
 	newUser, err := u.client.CreateUser(ctx, newUserInfo)
 	if err != nil {
-		return nil, nil, nil, err
+		// The conflict already proves the account exists. Report it as such and
+		// let the next user sync correlate the resource.
+		if zoom.IsAPIError(err, http.StatusConflict, zoom.UserAlreadyExistsErrorCode) {
+			ctxzap.Extract(ctx).Debug("baton-zoom: account already exists in Zoom")
+			return &v2.CreateAccountResponse_AlreadyExistsResult{IsCreateAccountResult: true}, nil, nil, nil
+		}
+		return nil, nil, nil, fmt.Errorf("baton-zoom: create account: %w", err)
 	}
 
-	userResource, err := userResource(zoom.User{
-		ID:        newUser.Id,
-		FirstName: newUser.FirstName,
-		LastName:  newUser.LastName,
-		Email:     newUser.Email,
-		Type:      newUser.Type,
+	userResource, err := userResource(&zoom.User{
+		ID:          newUser.Id,
+		FirstName:   newUser.FirstName,
+		LastName:    newUser.LastName,
+		Email:       newUser.Email,
+		Type:        newUser.Type,
+		DisplayName: newUserInfo.UserInfo.DisplayName,
+		Status:      userStatusPending,
 	}, nil)
 	if err != nil {
 		return nil, nil, nil, err
@@ -237,24 +242,24 @@ func (u *userResourceType) CreateAccount(
 func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, error) {
 	pMap := accountInfo.Profile.AsMap()
 
-	email, ok := pMap["email"].(string)
-	if !ok || email == "" {
-		return nil, fmt.Errorf("email is required")
+	email, err := requiredStringProfileField(pMap, emailKey, "email")
+	if err != nil {
+		return nil, err
 	}
 
-	firstName, ok := pMap["first_name"].(string)
-	if !ok || firstName == "" {
-		return nil, fmt.Errorf("first name is required")
+	firstName, err := requiredStringProfileField(pMap, firstNameKey, "first name")
+	if err != nil {
+		return nil, err
 	}
 
-	lastName, ok := pMap["last_name"].(string)
-	if !ok || lastName == "" {
-		return nil, fmt.Errorf("last name is required")
+	lastName, err := requiredStringProfileField(pMap, lastNameKey, "last name")
+	if err != nil {
+		return nil, err
 	}
 
-	displayName, ok := pMap["display_name"].(string)
-	if !ok || displayName == "" {
-		return nil, fmt.Errorf("display name is required")
+	displayName, err := requiredStringProfileField(pMap, displayNameKey, "display name")
+	if err != nil {
+		return nil, err
 	}
 
 	newUserInfo := &zoom.UserCreationBody{
@@ -271,35 +276,51 @@ func createNewUserInfo(accountInfo *v2.AccountInfo) (*zoom.UserCreationBody, err
 	return newUserInfo, nil
 }
 
+func requiredStringProfileField(profile map[string]any, key, displayName string) (string, error) {
+	rawValue, ok := profile[key]
+	if !ok || rawValue == nil {
+		return "", uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: create account: %s is required", displayName),
+		)
+	}
+
+	value, ok := rawValue.(string)
+	if !ok {
+		return "", uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: create account: invalid %s format: expected a string", displayName),
+		)
+	}
+	if value == "" {
+		return "", uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: create account: %s is required", displayName),
+		)
+	}
+
+	return value, nil
+}
+
 func (u *userResourceType) Delete(ctx context.Context, principal *v2.ResourceId) (annotations.Annotations, error) {
 	userID := principal.Resource
 
-	err := u.client.DeleteUser(ctx, userID)
+	err := u.client.DeleteUser(ctx, userID, zoom.DeleteUserOptions{Action: zoom.Delete})
 	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("baton-zoom: failed to delete user %s: %w", userID, err)
 	}
 
 	return nil, nil
 }
 
-// userBuilder returns the user syncer. Users have no entitlements of their
-// own, so the user resource type always skips the entitlements pass. The only
-// grants users emit are license tiers, so when skipLicenseGrants is true (the
-// license resource type is excluded from the sync) the grants pass is skipped
-// too — the license resources those grants target wouldn't exist in the sync.
-func userBuilder(client *zoom.Client, syncInactiveUsers bool, skipLicenseGrants bool) *userResourceType {
-	resourceType := proto.Clone(resourceTypeUser).(*v2.ResourceType)
-	userAnnos := annotations.Annotations(resourceType.GetAnnotations())
-	if skipLicenseGrants {
-		userAnnos.Update(&v2.SkipEntitlementsAndGrants{})
-	} else {
-		userAnnos.Update(&v2.SkipEntitlements{})
-	}
-	resourceType.Annotations = userAnnos
-
+func userBuilder(client *zoom.Client, syncInactiveUsers bool, syncResourceTypes map[string]struct{}) *userResourceType {
 	return &userResourceType{
-		resourceType:      resourceType,
+		resourceType:      resourceTypeUser,
 		client:            client,
 		syncInactiveUsers: syncInactiveUsers,
+		syncResourceTypes: syncResourceTypes,
 	}
 }

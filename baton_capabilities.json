@@ -51,9 +51,6 @@
                 "permission": "group:read:list_groups:admin"
               },
               {
-                "permission": "group:read:list_members:admin"
-              },
-              {
                 "permission": "group:read:administrator:admin"
               },
               {
@@ -80,9 +77,6 @@
         "permissions": [
           {
             "permission": "group:read:list_groups:admin"
-          },
-          {
-            "permission": "group:read:list_members:admin"
           },
           {
             "permission": "group:read:administrator:admin"
@@ -204,15 +198,15 @@
                 "permission": "role:read:list_roles:admin"
               },
               {
-                "permission": "role:read:list_members:admin"
-              },
-              {
                 "permission": "role:write:member:admin"
               },
               {
                 "permission": "role:delete:member:admin"
               }
             ]
+          },
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipGrants"
           }
         ]
       },
@@ -224,9 +218,6 @@
         "permissions": [
           {
             "permission": "role:read:list_roles:admin"
-          },
-          {
-            "permission": "role:read:list_members:admin"
           },
           {
             "permission": "role:write:member:admin"

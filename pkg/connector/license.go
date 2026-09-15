@@ -41,11 +41,10 @@ package connector
 //     three assignable tiers (1, 2, 4) as STATIC resources hardcoded in
 //     licenseDefinitions.
 //
-//  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants (using
-//     User.type stashed in the user profile during List), not from
-//     licenseResourceType.Grants. Each user holds exactly one tier, so a
-//     single user pagination sweep produces all license grants — emitting
-//     from the license side would require an O(N × tiers) scan.
+//  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants using
+//     User.type persisted by the user list, not from licenseResourceType.Grants.
+//     Each user holds exactly one tier; emitting from the license side would
+//     require an O(N × tiers) scan.
 //
 //  4. Seat counts only attach to the Licensed tier resource:
 //
@@ -75,20 +74,25 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
+	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-const (
-	assignedEntitlement = "assigned"
-)
+// licenseExclusionGroup marks the tiers as mutually exclusive: a Zoom user
+// carries exactly one type, so granting a tier replaces the previous one.
+const licenseExclusionGroup = "zoom-license"
 
 // licenseDefinition is one Zoom license tier (id + display name).
 type licenseDefinition struct {
@@ -142,22 +146,23 @@ func licenseResource(def licenseDefinition, purchased, consumed int64) (*v2.Reso
 	)
 }
 
-// List returns the three static license tiers. The plan_base fetch is
-// best-effort: if the billing scope is missing or the call fails, the
-// tiers are still emitted, just without seat numbers on Licensed.
+// List returns the three static license tiers. If the optional billing scope
+// is missing, the tiers are still emitted without seat numbers on Licensed.
 func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	logger := ctxzap.Extract(ctx)
 
 	var purchased, consumed int64
-	usage, resp, err := l.client.GetAccountPlanUsage(ctx)
-	if resp != nil {
-		defer resp.Body.Close()
-	}
+	usage, annos, err := l.client.GetAccountPlanUsage(ctx)
 	if err != nil {
-		logger.Warn(
-			"baton-zoom: failed to fetch plan usage; emitting licenses without seat counts",
-			zap.Error(err),
-		)
+		scopeUnavailable := status.Code(err) == codes.PermissionDenied ||
+			zoom.IsAPIErrorCode(err, zoom.MissingScopeErrorCode)
+		if !scopeUnavailable {
+			return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf(
+				"baton-zoom: list licenses: failed to fetch plan usage: %w",
+				err,
+			)
+		}
+		logger.Debug("baton-zoom: billing scope unavailable; emitting licenses without seat counts", zap.Error(err))
 	} else if usage != nil {
 		purchased = int64(usage.PlanBase.Hosts)
 		consumed = int64(usage.PlanBase.Usage)
@@ -172,11 +177,6 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 		rv = append(rv, lr)
 	}
 
-	annos, err := parseResp(resp)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	return rv, &resource.SyncOpResults{Annotations: annos}, nil
 }
 
@@ -185,6 +185,7 @@ func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ reso
 func (l *licenseResourceType) Entitlements(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Entitlement, *resource.SyncOpResults, error) {
 	opts := []ent.EntitlementOption{
 		ent.WithGrantableTo(resourceTypeUser),
+		ent.WithExclusionGroup(licenseExclusionGroup),
 		ent.WithDisplayName(fmt.Sprintf("%s license %s", res.DisplayName, assignedEntitlement)),
 		ent.WithDescription(fmt.Sprintf("Holds a %s license seat in Zoom", res.DisplayName)),
 	}
@@ -202,33 +203,48 @@ func (l *licenseResourceType) Grants(_ context.Context, _ *v2.Resource, _ resour
 // A pre-flight GET resolves the current tier and short-circuits with
 // GrantAlreadyExists when the target tier already matches.
 func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, nil, fmt.Errorf("baton-zoom: only users can be granted a license (got %q)", principal.Id.ResourceType)
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can be granted a license"); err != nil {
+		return nil, nil, err
 	}
 
-	targetType, err := strconv.Atoi(entitlement.Resource.Id.Resource)
+	targetType, err := parseLicenseType(entitlement.Resource.Id.Resource)
 	if err != nil {
-		return nil, nil, fmt.Errorf("baton-zoom: invalid license resource id %q: %w", entitlement.Resource.Id.Resource, err)
+		return nil, nil, err
 	}
 
-	user, resp, err := l.client.GetUser(ctx, principal.Id.Resource)
+	result := []*v2.Grant{
+		grant.NewGrant(entitlement.GetResource(), assignedEntitlement, principal.GetId()),
+	}
+
+	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return nil, nil, fmt.Errorf("baton-zoom: failed to get user before granting license: %w", err)
 	}
-	resp.Body.Close()
 
-	if user.Type == targetType {
-		return nil, annotations.New(&v2.GrantAlreadyExists{}), nil
+	if zoom.UserType(user.Type) == targetType {
+		return result, annotations.New(&v2.GrantAlreadyExists{}), nil
 	}
 
-	if err := l.client.PatchUserLicense(ctx, principal.Id.Resource, zoom.UserType(targetType)); err != nil {
+	var replacedGrantID string
+	if isLicenseTier(zoom.UserType(user.Type)) {
+		previousTier := v2.Resource_builder{
+			Id: v2.ResourceId_builder{
+				ResourceType: resourceTypeLicense.Id,
+				Resource:     strconv.Itoa(user.Type),
+			}.Build(),
+		}.Build()
+		replacedGrantID = grant.NewGrant(previousTier, assignedEntitlement, principal.GetId()).GetId()
+	}
+
+	if err := l.client.PatchUserLicense(ctx, principal.Id.Resource, targetType); err != nil {
 		return nil, nil, fmt.Errorf("baton-zoom: failed to assign license to user: %w", err)
 	}
 
-	return nil, nil, nil
+	var annos annotations.Annotations
+	if replacedGrantID != "" {
+		annos = grant.AppendGrantReplaced(annos, replacedGrantID)
+	}
+	return result, annos, nil
 }
 
 // Revoke downgrades the user to Basic via PATCH (Zoom has no "no license"
@@ -238,29 +254,28 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 	entitlement := g.Entitlement
 	principal := g.Principal
 
-	if principal.Id.ResourceType != resourceTypeUser.Id {
-		return nil, fmt.Errorf("baton-zoom: only users can have a license revoked (got %q)", principal.Id.ResourceType)
+	if err := requireUserPrincipal(ctx, principal, "baton-zoom: only users can have a license revoked"); err != nil {
+		return nil, err
 	}
 
-	grantedType, err := strconv.Atoi(entitlement.Resource.Id.Resource)
+	grantedType, err := parseLicenseType(entitlement.Resource.Id.Resource)
 	if err != nil {
-		return nil, fmt.Errorf("baton-zoom: invalid license resource id %q: %w", entitlement.Resource.Id.Resource, err)
+		return nil, err
 	}
 
-	user, resp, err := l.client.GetUser(ctx, principal.Id.Resource)
+	user, _, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		if resp != nil {
-			resp.Body.Close()
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 		}
 		return nil, fmt.Errorf("baton-zoom: failed to get user before revoking license: %w", err)
 	}
-	resp.Body.Close()
 
-	if user.Type != grantedType {
+	if zoom.UserType(user.Type) != grantedType {
 		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 	}
 
-	if grantedType == int(zoom.BasicUser) {
+	if grantedType == zoom.BasicUser {
 		return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 	}
 
@@ -269,6 +284,27 @@ func (l *licenseResourceType) Revoke(ctx context.Context, g *v2.Grant) (annotati
 	}
 
 	return nil, nil
+}
+
+func parseLicenseType(resourceID string) (zoom.UserType, error) {
+	licenseType, err := strconv.Atoi(resourceID)
+	if err != nil {
+		return 0, uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: invalid license resource id %q", resourceID),
+			err,
+		)
+	}
+
+	targetType := zoom.UserType(licenseType)
+	if !isLicenseTier(targetType) {
+		return 0, uhttp.WrapErrors(
+			codes.InvalidArgument,
+			fmt.Sprintf("baton-zoom: unknown license resource id %q", resourceID),
+		)
+	}
+
+	return targetType, nil
 }
 
 func licenseBuilder(client *zoom.Client) *licenseResourceType {

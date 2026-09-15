@@ -12,24 +12,20 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 )
 
+// Zoom implements the Baton connector for the Zoom API.
 type Zoom struct {
 	client            *zoom.Client
 	syncInactiveUsers bool
-	// skipLicenseGrants is true when the customer's sync filter excludes the
-	// license resource type. The zero value (false) preserves the default
-	// behavior, so the capabilities stub in NewForCapabilities advertises the
-	// standard user resource type.
-	skipLicenseGrants bool
+	syncResourceTypes map[string]struct{}
 }
 
+// NewForCapabilities creates a connector that advertises every supported capability.
 func NewForCapabilities() *Zoom {
 	return &Zoom{syncInactiveUsers: true}
 }
 
-// New returns the Zoom connector. syncLicenses reports whether the license
-// resource type will be synced under the current configuration (derived from
-// cli.ConnectorOpts.WillSyncResourceType in main.go); when false, the user
-// syncer skips emitting license grants.
+// New creates a Zoom connector. An empty syncResourceTypes set enables
+// grants for all resource types.
 func New(
 	ctx context.Context,
 	accountId string,
@@ -37,22 +33,27 @@ func New(
 	clientSecret string,
 	syncInactiveUsers bool,
 	baseURL string,
-	syncLicenses bool,
+	syncResourceTypes map[string]struct{},
 ) (*Zoom, error) {
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
 	if err != nil {
 		return nil, err
 	}
 
-	token, err := zoom.RequestAccessToken(ctx, accountId, clientId, clientSecret)
+	token, err := zoom.RequestAccessToken(ctx, accountId, clientId, clientSecret, "")
 	if err != nil {
-		return nil, fmt.Errorf("zoom-connector: failed to get token: %w", err)
+		return nil, fmt.Errorf("baton-zoom: failed to get token: %w", err)
+	}
+
+	zoomClient, err := zoom.NewClient(ctx, httpClient, token, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("baton-zoom: failed to create client: %w", err)
 	}
 
 	return &Zoom{
-		client:            zoom.NewClient(httpClient, token, baseURL),
+		client:            zoomClient,
 		syncInactiveUsers: syncInactiveUsers,
-		skipLicenseGrants: !syncLicenses,
+		syncResourceTypes: syncResourceTypes,
 	}, nil
 }
 
@@ -62,7 +63,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 		Description: "Connector syncing users, groups, roles, contact groups, and license tiers from Zoom to Baton.",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
-				"email": {
+				emailKey: {
 					DisplayName: "Email",
 					Required:    true,
 					Description: "This email will be used as the login for the user.",
@@ -92,7 +93,7 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 					Placeholder: "Doe",
 					Order:       3,
 				},
-				"display_name": {
+				displayNameKey: {
 					DisplayName: "Display Name",
 					Required:    true,
 					Description: "This is the name that will be displayed on the new account.",
@@ -108,15 +109,14 @@ func (z *Zoom) Metadata(_ context.Context) (*v2.ConnectorMetadata, error) {
 }
 
 func (z *Zoom) Validate(ctx context.Context) (annotations.Annotations, error) {
-	user, resp, err := z.client.GetUser(ctx, "me")
+	user, _, err := z.client.GetUser(ctx, "me")
 	if err != nil {
-		return nil, fmt.Errorf("zoom-connector: failed to get current user: %w", err)
+		return nil, fmt.Errorf("baton-zoom: failed to get current user: %w", err)
 	}
-	resp.Body.Close()
 
 	// all required scopes are for admins only
 	if user.RoleName == "member" {
-		return nil, fmt.Errorf("zoom-connector: user is not an admin")
+		return nil, fmt.Errorf("baton-zoom: user is not an admin")
 	}
 
 	return nil, nil
@@ -128,11 +128,11 @@ func (z *Zoom) Close() error {
 
 func (z *Zoom) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	return []connectorbuilder.ResourceSyncerV2{
-		userBuilder(z.client, z.syncInactiveUsers, z.skipLicenseGrants),
+		userBuilder(z.client, z.syncInactiveUsers, z.syncResourceTypes),
 		inviteBuilder(z.client),
 		groupBuilder(z.client),
 		roleBuilder(z.client),
-		contactGroupBuilder(z.client),
+		contactGroupBuilder(z.client, z.syncResourceTypes),
 		licenseBuilder(z.client),
 	}
 }

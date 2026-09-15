@@ -1,4 +1,6 @@
 name: ci
+# Secrets: BATON_ACCOUNT_ID, BATON_ZOOM_CLIENT_ID, BATON_ZOOM_CLIENT_SECRET
+# Variables: CI_{GROUP,ROLE}_ENTITLEMENT, CI_{GROUP,ROLE}_PRINCIPAL
 on: pull_request
 jobs:
   test:
@@ -8,10 +10,6 @@ jobs:
       BATON_ACCOUNT_ID: ${{ secrets.BATON_ACCOUNT_ID }}
       BATON_ZOOM_CLIENT_ID: ${{ secrets.BATON_ZOOM_CLIENT_ID }}
       BATON_ZOOM_CLIENT_SECRET: ${{ secrets.BATON_ZOOM_CLIENT_SECRET }}
-      CONNECTOR_PRINCIPAL: ${{ vars.TEST_PRINCIPAL }}
-      CONNECTOR_PRINCIPAL_TYPE: ${{ vars.TEST_PRINCIPAL_TYPE }}
-      CONNECTOR_ENTITLEMENT: group:${{ vars.TEST_GROUP_ID }}:member
-      CONNECTOR_GRANT: group:${{ vars.TEST_GROUP_ID }}:member:user:${{ vars.TEST_PRINCIPAL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,15 +19,19 @@ jobs:
           go-version-file: go.mod
       - name: Build baton-zoom
         run: go build ./cmd/baton-zoom
-      - name: Run baton-zoom
-        run: ./baton-zoom --log-level=debug
-      - name: Install baton
-        uses: ConductorOne/github-workflows/actions/get-baton@v4
-      - name: Revoke grant
-        run: ./baton-zoom --revoke-grant "${{ env.CONNECTOR_GRANT }}"
-      - name: Check grant was revoked
-        run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status "if .grants then .grants[]?.principal.id.resource != \"${{ env.CONNECTOR_PRINCIPAL }}\" else . end"
-      - name: Grant entitlement
-        run: ./baton-zoom --grant-entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --grant-principal "${{ env.CONNECTOR_PRINCIPAL }}" --grant-principal-type "${{ env.CONNECTOR_PRINCIPAL_TYPE }}"
-      - name: Check grant was granted
-        run: ./baton-zoom && baton grants --entitlement "${{ env.CONNECTOR_ENTITLEMENT }}" --output-format=json | jq --exit-status ".grants[].principal.id.resource == \"${{ env.CONNECTOR_PRINCIPAL }}\""
+      - name: Grant/Revoke group membership
+        uses: ConductorOne/github-workflows/actions/sync-test@v4
+        with:
+          connector: ./baton-zoom
+          baton-entitlement: ${{ vars.CI_GROUP_ENTITLEMENT }}
+          baton-principal: ${{ vars.CI_GROUP_PRINCIPAL }}
+          baton-principal-type: user
+          required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET
+      - name: Grant/Revoke role membership
+        uses: ConductorOne/github-workflows/actions/sync-test@v4
+        with:
+          connector: ./baton-zoom
+          baton-entitlement: ${{ vars.CI_ROLE_ENTITLEMENT }}
+          baton-principal: ${{ vars.CI_ROLE_PRINCIPAL }}
+          baton-principal-type: user
+          required-secrets: BATON_ACCOUNT_ID,BATON_ZOOM_CLIENT_ID,BATON_ZOOM_CLIENT_SECRET

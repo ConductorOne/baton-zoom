@@ -2,8 +2,8 @@ package connector
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	config "github.com/conductorone/baton-sdk/pb/c1/config/v1"
@@ -11,7 +11,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/actions"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -168,20 +167,16 @@ func (u *userResourceType) transferAndDeleteUserAction(
 
 	// Confirm the recipient first because Zoom's DELETE response does not
 	// identify which user caused a 404.
-	var rateLimitAnnos annotations.Annotations
+	rateLimitAnnos := annotations.Annotations{}
 	if transferEmail != "" {
-		_, resp, err := u.client.GetUser(ctx, transferEmail)
+		_, annos, err := u.client.GetUser(ctx, transferEmail)
 		if err != nil {
-			if zoom.IsUserNotFound(err) {
+			if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 				return nil, nil, status.Error(codes.InvalidArgument, "baton-zoom: transfer_and_delete_user: transfer recipient was not found")
 			}
-			return nil, nil, mapAPIError(err, "baton-zoom: transfer_and_delete_user: verify transfer recipient")
+			return nil, nil, fmt.Errorf("baton-zoom: transfer_and_delete_user: verify transfer recipient: %w", err)
 		}
-		rateLimitAnnos, err = parseResp(resp)
-		resp.Body.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("baton-zoom: transfer_and_delete_user: parse rate-limit headers: %w", err)
-		}
+		rateLimitAnnos = annos
 	}
 
 	// Do not log transfer_email because it is PII. Keep it out of returned
@@ -194,7 +189,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		zap.Bool("transfer_recording", transferRecording),
 	)
 
-	err = u.client.DeleteUserWithTransfer(ctx, userID, zoom.DeleteUserOptions{
+	err = u.client.DeleteUser(ctx, userID, zoom.DeleteUserOptions{
 		Action:            zoom.DeleteAction(deleteAction),
 		TransferEmail:     transferEmail,
 		TransferMeeting:   transferMeeting,
@@ -202,7 +197,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 		TransferRecording: transferRecording,
 	})
 	if err != nil {
-		if zoom.IsUserNotFound(err) {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 			if !transferring {
 				return actions.NewReturnValues(
 					true,
@@ -214,7 +209,7 @@ func (u *userResourceType) transferAndDeleteUserAction(
 			return nil, rateLimitAnnos, status.Errorf(codes.FailedPrecondition,
 				"baton-zoom: transfer_and_delete_user: user %s was already removed from the account, but the requested transfer cannot be confirmed; verify manually", userID)
 		}
-		return nil, rateLimitAnnos, mapAPIError(err, fmt.Sprintf("baton-zoom: transfer_and_delete_user: %s", userID))
+		return nil, rateLimitAnnos, fmt.Errorf("baton-zoom: transfer_and_delete_user: %s: %w", userID, err)
 	}
 
 	message := fmt.Sprintf("user %s %sd from the account", userID, deleteAction)
@@ -254,20 +249,4 @@ func optionalBoolArg(args *structpb.Struct, key string) (bool, error) {
 		return boolValue, nil
 	}
 	return false, fmt.Errorf("%s must be a boolean", key)
-}
-
-// mapAPIError maps Zoom HTTP errors while preserving the typed API error.
-func mapAPIError(err error, prefix string) error {
-	var apiErr *zoom.APIError
-	if !errors.As(err, &apiErr) {
-		return fmt.Errorf("%s: %w", prefix, err)
-	}
-	code := uhttp.GrpcCodeFromHTTPStatus(apiErr.StatusCode)
-	// Keep *zoom.APIError as the sole carrier of the raw body; joining err
-	// already attaches it, so do not also render err into the status message.
-	msg := prefix
-	if apiErr.Message != "" {
-		msg = fmt.Sprintf("%s: %s", prefix, apiErr.Message)
-	}
-	return uhttp.WrapErrors(code, msg, err)
 }
