@@ -168,6 +168,42 @@ func TestDoRequestAnnotatesRateLimitOnSuccess(t *testing.T) {
 	assert.Equal(t, int64(37), description.GetRemaining())
 }
 
+func TestEnsureGroupMemberReturnsLatestRateLimitAnnotation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-RateLimit-Limit", "100")
+		switch r.Method {
+		case http.MethodPost:
+			w.Header().Set("X-RateLimit-Remaining", "90")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ids":""}`))
+		case http.MethodGet:
+			w.Header().Set("X-RateLimit-Remaining", "80")
+			_, _ = w.Write([]byte(`{"id":"user-id","group_ids":["group-id"]}`))
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	created, annos, err := newTestClient(t, server.Client(), server.URL).EnsureGroupMember(
+		t.Context(),
+		"group-id",
+		"user-id",
+	)
+	require.NoError(t, err)
+	assert.False(t, created)
+	require.Len(t, annos, 1)
+
+	description := &v2.RateLimitDescription{}
+	found, err := annos.Pick(description)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(80), description.GetRemaining())
+}
+
 // An empty ids field is ambiguous, so the client reads the user's group_ids
 // instead of scanning the group: present means the membership already existed,
 // absent means Zoom accepted the request and added nobody.

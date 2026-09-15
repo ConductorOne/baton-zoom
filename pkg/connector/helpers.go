@@ -23,6 +23,8 @@ const (
 	loginKey           = "login"
 	userIDKey          = "user_id"
 	userTypeProfileKey = "type"
+	userRoleProfileKey = "role_id"
+	userGroupIDsKey    = "group_ids"
 
 	userStatusActive   = "active"
 	userStatusInactive = "inactive"

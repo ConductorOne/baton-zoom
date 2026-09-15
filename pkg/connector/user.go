@@ -15,7 +15,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 )
 
@@ -32,12 +31,19 @@ func (u *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 
 // Create a new connector resource for a Zoom user.
 func userResource(user *zoom.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+	groupIDs := make([]any, 0, len(user.GroupIDs))
+	for _, groupID := range user.GroupIDs {
+		groupIDs = append(groupIDs, groupID)
+	}
+
 	profile := map[string]any{
 		firstNameKey:       user.FirstName,
 		lastNameKey:        user.LastName,
 		loginKey:           user.Email,
 		userIDKey:          user.ID,
 		userTypeProfileKey: int64(user.Type),
+		userRoleProfileKey: user.RoleID,
+		userGroupIDsKey:    groupIDs,
 	}
 
 	userTraitTraitOptions := []resource.UserTraitOption{
@@ -112,11 +118,10 @@ func (u *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ res
 	return nil, nil, nil
 }
 
-// Grants emits the user's group, role and license memberships from the principal
-// side. GET /v2/users/{userId} returns group_ids, role_id and type together, so
-// the group and role builders never have to rescan every member to invert the
-// relationship.
-func (u *userResourceType) Grants(ctx context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
+// Grants emits group, role and license memberships from the fields persisted by
+// List. The group and role builders do not rescan every member, and Grants does
+// not re-fetch each user.
+func (u *userResourceType) Grants(_ context.Context, res *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	syncGroups := willSyncResourceType(u.syncResourceTypes, resourceTypeGroup.Id)
 	syncRoles := willSyncResourceType(u.syncResourceTypes, resourceTypeRole.Id)
 	syncLicenses := willSyncResourceType(u.syncResourceTypes, resourceTypeLicense.Id)
@@ -124,22 +129,13 @@ func (u *userResourceType) Grants(ctx context.Context, res *v2.Resource, _ resou
 		return nil, nil, nil
 	}
 
-	user, annos, err := u.client.GetUser(ctx, res.Id.Resource)
-	if err != nil {
-		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
-			ctxzap.Extract(ctx).Debug(
-				"baton-zoom: skipping grants for user that Zoom no longer returns",
-				zap.String("user_id", res.Id.Resource),
-			)
-			return nil, &resource.SyncOpResults{Annotations: annos}, nil
-		}
-		return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf("baton-zoom: list user grants: %w", err)
-	}
-
+	profile := resource.GetProfile(res)
 	var grants []*v2.Grant
 
 	if syncGroups {
-		for _, groupID := range user.GroupIDs {
+		groupIDs := profile.GetFields()[userGroupIDsKey].GetListValue()
+		for _, value := range groupIDs.GetValues() {
+			groupID := value.GetStringValue()
 			if groupID == "" {
 				continue
 			}
@@ -151,23 +147,25 @@ func (u *userResourceType) Grants(ctx context.Context, res *v2.Resource, _ resou
 		}
 	}
 
-	if syncRoles && user.RoleID != "" {
+	roleID, _ := resource.GetProfileStringValue(profile, userRoleProfileKey)
+	if syncRoles && roleID != "" {
 		grants = append(grants, grant.NewGrant(
-			grantResource(resourceTypeRole.Id, user.RoleID),
+			grantResource(resourceTypeRole.Id, roleID),
 			memberEntitlement,
 			res.Id,
 		))
 	}
 
-	if syncLicenses && isLicenseTier(zoom.UserType(user.Type)) {
+	userType, hasUserType := resource.GetProfileInt64Value(profile, userTypeProfileKey)
+	if syncLicenses && hasUserType && isLicenseTier(zoom.UserType(userType)) {
 		grants = append(grants, grant.NewGrant(
-			grantResource(resourceTypeLicense.Id, strconv.Itoa(user.Type)),
+			grantResource(resourceTypeLicense.Id, strconv.FormatInt(userType, 10)),
 			assignedEntitlement,
 			res.Id,
 		))
 	}
 
-	return grants, &resource.SyncOpResults{Annotations: annos}, nil
+	return grants, nil, nil
 }
 
 func grantResource(resourceTypeID, resourceID string) *v2.Resource {

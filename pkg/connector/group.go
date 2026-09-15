@@ -80,8 +80,8 @@ func (g *groupResourceType) Entitlements(_ context.Context, r *v2.Resource, _ re
 	return rv, &resource.SyncOpResults{}, nil
 }
 
-// Grants emits group-admin assignments. Member grants are emitted from
-// user.Grants using GET /v2/users/{id} group_ids.
+// Grants emits group-admin assignments. Member grants are emitted by
+// user.Grants from the group_ids persisted by the user list.
 func (g *groupResourceType) Grants(ctx context.Context, r *v2.Resource, opts resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	bag, page, err := parsePageToken(opts.PageToken.Token, &v2.ResourceId{
 		ResourceType: resourceTypeGroup.Id,

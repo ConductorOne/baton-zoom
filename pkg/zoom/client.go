@@ -201,7 +201,7 @@ func (c *Client) EnsureGroupMember(ctx context.Context, groupId, userId string) 
 	}
 	added := &membershipMutationResponse{}
 	annos, err := c.doRequest(ctx, endpoint, added, http.MethodPost, nil, idsBody(membersBodyKey, userId))
-	output.Merge(annos...)
+	output = annos
 	if err != nil {
 		return false, output, err
 	}
@@ -210,7 +210,7 @@ func (c *Client) EnsureGroupMember(ctx context.Context, groupId, userId string) 
 	}
 
 	user, annos, err := c.GetUser(ctx, userId)
-	output.Merge(annos...)
+	output = annos
 	if err != nil {
 		return false, output, err
 	}
@@ -233,7 +233,7 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 	}
 	added := &membershipMutationResponse{}
 	annos, err := c.doRequest(ctx, endpoint, added, http.MethodPost, nil, idsBody(adminsBodyKey, userId))
-	output.Merge(annos...)
+	output = annos
 	if err != nil {
 		return false, output, err
 	}
@@ -246,7 +246,7 @@ func (c *Client) EnsureGroupAdmin(ctx context.Context, groupId, userId, email st
 	seenTokens := make(map[string]struct{})
 	for {
 		admins, nextToken, annos, err := c.GetGroupAdmins(ctx, groupId, token)
-		output.Merge(annos...)
+		output = annos
 		if err != nil {
 			return false, output, err
 		}

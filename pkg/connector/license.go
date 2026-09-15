@@ -41,11 +41,10 @@ package connector
 //     three assignable tiers (1, 2, 4) as STATIC resources hardcoded in
 //     licenseDefinitions.
 //
-//  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants (using
-//     User.type from GET /v2/users/{userId}), not from
-//     licenseResourceType.Grants. Each user holds exactly one tier, so the
-//     per-user lookup produces all license grants — emitting from the license
-//     side would require an O(N × tiers) scan.
+//  3. License grants are emitted PRINCIPAL-SIDE from userBuilder.Grants using
+//     User.type persisted by the user list, not from licenseResourceType.Grants.
+//     Each user holds exactly one tier; emitting from the license side would
+//     require an O(N × tiers) scan.
 //
 //  4. Seat counts only attach to the Licensed tier resource:
 //
@@ -88,6 +87,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // licenseExclusionGroup marks the tiers as mutually exclusive: a Zoom user
@@ -146,19 +146,21 @@ func licenseResource(def licenseDefinition, purchased, consumed int64) (*v2.Reso
 	)
 }
 
-// List returns the three static license tiers. The plan_base fetch is
-// best-effort: if the billing scope is missing or the call fails, the
-// tiers are still emitted, just without seat numbers on Licensed.
+// List returns the three static license tiers. If the optional billing scope
+// is missing, the tiers are still emitted without seat numbers on Licensed.
 func (l *licenseResourceType) List(ctx context.Context, _ *v2.ResourceId, _ resource.SyncOpAttrs) ([]*v2.Resource, *resource.SyncOpResults, error) {
 	logger := ctxzap.Extract(ctx)
 
 	var purchased, consumed int64
 	usage, annos, err := l.client.GetAccountPlanUsage(ctx)
 	if err != nil {
-		logger.Debug(
-			"baton-zoom: failed to fetch plan usage; emitting licenses without seat counts",
-			zap.Error(err),
-		)
+		if status.Code(err) != codes.PermissionDenied {
+			return nil, &resource.SyncOpResults{Annotations: annos}, fmt.Errorf(
+				"baton-zoom: list licenses: failed to fetch plan usage: %w",
+				err,
+			)
+		}
+		logger.Debug("baton-zoom: billing scope unavailable; emitting licenses without seat counts", zap.Error(err))
 	} else if usage != nil {
 		purchased = int64(usage.PlanBase.Hosts)
 		consumed = int64(usage.PlanBase.Usage)
