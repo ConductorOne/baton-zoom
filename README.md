@@ -49,6 +49,14 @@ Granting a license PATCHes the user's `type` field to the target tier. Revoking 
 
 When the `billing:read:plan_usage:admin` scope is granted, the Licensed resource is decorated with `purchased_seats` and `consumed_seats` (from `GET /v2/accounts/me/plans/usage` → `plan_base.hosts` / `plan_base.usage`). Without the scope, sync still succeeds — only the seat counts are omitted.
 
+## Roles
+
+A Zoom user holds exactly one account role. `GET /v2/users` returns a single `role_id` per user, and the connector emits one role grant from it.
+
+Granting a role replaces the role the user already holds. The connector issues `POST /v2/roles/{roleId}/members` and returns a `GrantReplaced` annotation naming the superseded grant, so C1 marks the previous role revoked without a separate revoke call. This is Zoom's constraint rather than a connector policy — Zoom's role management does not represent a user in two account roles.
+
+Exclusivity covers account roles only. Group administrator is a separate Zoom concept and one user can administer several groups, so group admin grants are independent of the account role. Zoom Phone and Zoom Contact Center have their own role management, which this connector does not sync.
+
 ## brew
 
 ```
@@ -81,8 +89,8 @@ baton resources
 - **Users** — `GET /v2/users`. The C1 profile retains `group_ids`, `role_id`, and `type`; user `Grants()` emits group membership, role assignment, and license grants from those stored list fields without a per-user detail request.
 - **Invites** — pending users (`GET /v2/users?status=pending`).
 - **Groups** — `GET /v2/groups`. Member grants come from user `group_ids`. Admin grants come from `GET /v2/groups/{groupId}/admins`.
-- **Contact Groups** — `GET /v2/contacts/groups` and `GET /v2/contacts/groups/{id}/members` (read-only).
-- **Roles** — `GET /v2/roles`. Membership grants come from each user's `role_id`.
+- **Contact Groups** — `GET /v2/contacts/groups` and `GET /v2/contacts/groups/{id}/members` (read-only). A member is either a user or a nested user group. A nested group's grant is expandable, so the users in that group also hold the contact group entitlement.
+- **Roles** — `GET /v2/roles`. Membership grants come from each user's `role_id`. A user holds one account role, so granting a role replaces the previous one. See [Roles](#roles).
 - **Licenses** — static Basic / Licensed / Unassigned tiers from `User.type`. Seat counts use `GET /v2/accounts/me/plans/usage` when the billing scope is present.
 
 Grant emission for group members, roles, and licenses is skipped when that target type is excluded from `--sync-resource-types`. Those grants also require `user` in the filter because they are emitted from user `Grants()`. Group admin grants still come from the group builder. See [`docs/doc-info.md`](docs/doc-info.md). Customer setup: [`docs/connector.mdx`](docs/connector.mdx).
