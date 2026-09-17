@@ -1,0 +1,833 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Zoom API (baton-zoom surface)",
+    "version": "1.0.0",
+    "description": "The subset of the Zoom API that baton-zoom calls, plus the OAuth token exchange it performs first. Scope is derived from pkg/zoom/client.go and pkg/zoom/helpers.go -- there are no request sites outside that package. Shapes are settled against Zoom's API reference and Zoom's own published OpenAPI document (github.com/zoom/api, openapi.v2.json), with the recorded payloads in pkg/zoom/client_test.go used to confirm response shapes. Response schemas include only the properties the Go structs decode; Zoom returns many more.\n\nAuth: the connector exchanges account credentials for a bearer token at zoom.us/oauth/token (HTTP basic with the client ID and secret) and sends that token as `Authorization: Bearer` on every API request, alongside `Accept: application/json`. GET requests additionally disable uhttp's response cache.\n\nEach operation's required granular scope is recorded in its description, copied from the doc comment on the corresponding client method.\n\nPagination: Zoom's `page_size` / `next_page_token` scheme. The connector always sends `page_size=50` and forwards `next_page_token` from the previous response; an empty `next_page_token` ends the page loop. `GET /roles` is not paginated.\n\nRate limiting: every response's rate-limit headers are parsed best-effort into Baton annotations, including on 429 and 5xx, so the retry hints survive failures. Errors are decoded into Zoom's `{code, message}` envelope and specific codes are matched by the callers (1001 user not found, 1005 email already exists, 4131 group member not found, 4138 group admin not found, 4711 missing scope)."
+  },
+  "servers": [
+    {
+      "url": "https://api.zoom.us/v2",
+      "description": "Zoom API. Overridable with the hidden `--base-url` flag, which is used for tests; path segments are joined onto whatever base is configured."
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    { "name": "OAuth", "description": "Account-credentials token exchange. Lives on a different host from the API." },
+    { "name": "Users", "description": "Users, synced as user resources (and pending users as invite resources); also the account-provisioning and license-assignment surface." },
+    { "name": "Groups", "description": "User groups, their members, and their administrators." },
+    { "name": "Contact Groups", "description": "Contact groups and their members." },
+    { "name": "Roles", "description": "Account roles and their member assignments." },
+    { "name": "Billing", "description": "Base-plan seat counts, used to report license capacity." }
+  ],
+  "paths": {
+    "/oauth/token": {
+      "post": {
+        "operationId": "requestAccessToken",
+        "summary": "Exchange account credentials for an access token",
+        "description": "Client: pkg/zoom/client.go:RequestAccessToken. Sent to a different host from the rest of this document (zoom.us, not api.zoom.us) and authenticated with HTTP basic using the configured client ID and secret rather than a bearer token. No API scope is required. The connector reads only `access_token` and fails when it is empty; a 400 whose body carries `error` of `invalid_client` or `invalid_grant` is mapped to an Unauthenticated status.",
+        "tags": ["OAuth"],
+        "servers": [
+          {
+            "url": "https://zoom.us",
+            "description": "Zoom OAuth host. RequestAccessToken accepts an authURL argument for tests; the connector always passes the empty string, so the default https://zoom.us/oauth/token is used in production."
+          }
+        ],
+        "security": [
+          { "basicAuth": [] }
+        ],
+        "parameters": [
+          {
+            "name": "grant_type",
+            "in": "query",
+            "required": true,
+            "description": "Always sent as `account_credentials`.",
+            "schema": { "type": "string", "enum": ["account_credentials"] }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "required": true,
+            "description": "The configured Zoom account ID.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": {
+                      "type": "string",
+                      "description": "The only field the connector decodes. Zoom also returns token_type, expires_in, and scope."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "OAuth error envelope, decoded into pkg/zoom.OAuthError.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OAuthError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List users",
+        "description": "Client: pkg/zoom/client.go:GetUsers. Required scope: `user:read:list_users:admin`. Called once per status: `active`, then `inactive` when the sync-inactive-users flag is set, and separately with `pending` to build the invite resources.",
+        "tags": ["Users"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Always sent by the connector. Zoom defaults to `active` when omitted.",
+            "schema": {
+              "type": "string",
+              "enum": ["active", "inactive", "pending"],
+              "default": "active"
+            }
+          },
+          { "$ref": "#/components/parameters/PageSize" },
+          { "$ref": "#/components/parameters/NextPageToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of users.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "users": { "type": "array", "items": { "$ref": "#/components/schemas/User" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      },
+      "post": {
+        "operationId": "createUser",
+        "summary": "Create a user",
+        "description": "Client: pkg/zoom/client.go:CreateUser. Required scope: `user:write:user:admin`. Error code 1005 on a 4xx means the email already exists on the account and is handled by the caller.",
+        "tags": ["Users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action", "user_info"],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": ["create", "autoCreate", "custCreate", "ssoCreate"],
+                    "description": "How the account is created. `create` emails an activation link; `autoCreate` is for managed domains; `custCreate` produces a user who cannot sign in; `ssoCreate` is for pre-provisioned SSO users."
+                  },
+                  "user_info": {
+                    "type": "object",
+                    "required": ["email", "type"],
+                    "properties": {
+                      "email": { "type": "string" },
+                      "first_name": { "type": "string" },
+                      "last_name": { "type": "string" },
+                      "display_name": { "type": "string" },
+                      "type": { "$ref": "#/components/schemas/UserType" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string", "description": "Becomes the Baton user resource ID for the new account." },
+                    "email": { "type": "string" },
+                    "first_name": { "type": "string" },
+                    "last_name": { "type": "string" },
+                    "type": { "$ref": "#/components/schemas/UserType" }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/UserId" }
+      ],
+      "get": {
+        "operationId": "getUser",
+        "summary": "Retrieve a user",
+        "description": "Client: pkg/zoom/client.go:GetUser. Required scope: `user:read:user:admin`. Used to read `group_ids` when a group-member add returns an ambiguous result, and by license handling. Error code 1001 means the user does not exist.",
+        "tags": ["Users"],
+        "responses": {
+          "200": {
+            "description": "The requested user.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      },
+      "patch": {
+        "operationId": "updateUserLicense",
+        "summary": "Change a user's license tier",
+        "description": "Client: pkg/zoom/client.go:PatchUserLicense. Required scope: `user:update:user:admin`. The connector sends only `type`; Zoom answers 204 with no body. Type 99 (None) is not settable here -- Zoom only accepts it via the ssoCreate action -- so only the PATCH-assignable tiers are modelled.",
+        "tags": ["Users"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": { "$ref": "#/components/schemas/PatchableUserType" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Updated. No body." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteUser",
+        "summary": "Delete or disassociate a user",
+        "description": "Client: pkg/zoom/client.go:DeleteUser. Required scope: `user:delete:user:admin`. The query parameters are emitted only when the caller sets them (pkg/zoom/helpers.go:deleteUserQuery); with none set the request carries no query string and Zoom applies its default, `disassociate`. Zoom requires `transfer_email` whenever any transfer flag is on; the client does not enforce that.",
+        "tags": ["Users"],
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "description": "`disassociate` unlinks the user but keeps the Zoom user record; `delete` removes the user entirely.",
+            "schema": { "type": "string", "enum": ["disassociate", "delete"], "default": "disassociate" }
+          },
+          {
+            "name": "transfer_email",
+            "in": "query",
+            "required": false,
+            "description": "Email of the user who inherits the transferred assets.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "transfer_meeting",
+            "in": "query",
+            "required": false,
+            "description": "Sent only as the literal string `true`, and omitted otherwise.",
+            "schema": { "type": "boolean" }
+          },
+          {
+            "name": "transfer_webinar",
+            "in": "query",
+            "required": false,
+            "description": "Sent only as the literal string `true`, and omitted otherwise.",
+            "schema": { "type": "boolean" }
+          },
+          {
+            "name": "transfer_recording",
+            "in": "query",
+            "required": false,
+            "description": "Sent only as the literal string `true`, and omitted otherwise.",
+            "schema": { "type": "boolean" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Deleted or disassociated. No body decoded." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/groups": {
+      "get": {
+        "operationId": "listGroups",
+        "summary": "List user groups",
+        "description": "Client: pkg/zoom/client.go:GetGroups. Required scope: `group:read:list_groups:admin`. Only `id` and `name` are decoded.",
+        "tags": ["Groups"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PageSize" },
+          { "$ref": "#/components/parameters/NextPageToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of groups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "groups": { "type": "array", "items": { "$ref": "#/components/schemas/Group" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/groups/{groupId}/members": {
+      "parameters": [
+        { "$ref": "#/components/parameters/GroupId" }
+      ],
+      "post": {
+        "operationId": "addGroupMembers",
+        "summary": "Add a user to a group",
+        "description": "Client: pkg/zoom/client.go:EnsureGroupMember. Required scope: `group:write:member:admin` (plus `user:read:user:admin` on the ambiguous path). The connector always posts exactly one member. Zoom answers 201 even when it added nobody, so an `ids` value that does not contain the posted user ID is disambiguated by re-reading the user's `group_ids` via getUser.",
+        "tags": ["Groups"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["members"],
+                "properties": {
+                  "members": {
+                    "type": "array",
+                    "description": "The connector sends a single-element array containing only `id`.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/MembershipMutation" },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/groups/{groupId}/members/{userId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/GroupId" },
+        { "$ref": "#/components/parameters/UserId" }
+      ],
+      "delete": {
+        "operationId": "deleteGroupMember",
+        "summary": "Remove a user from a group",
+        "description": "Client: pkg/zoom/client.go:DeleteGroupMember. Required scope: `group:delete:member:admin`. Error code 4131 means the user was not a member and is treated as already-revoked by the caller.",
+        "tags": ["Groups"],
+        "responses": {
+          "204": { "description": "Removed. No body decoded." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/groups/{groupId}/admins": {
+      "parameters": [
+        { "$ref": "#/components/parameters/GroupId" }
+      ],
+      "get": {
+        "operationId": "listGroupAdmins",
+        "summary": "List a group's administrators",
+        "description": "Client: pkg/zoom/client.go:GetGroupAdmins. Required scope: `group:read:administrator:admin`. Decoded into the same user struct as listUsers, but Zoom's reference documents only `email` and `name` here -- entries can arrive without an `id`, which the connector handles by matching on email.",
+        "tags": ["Groups"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PageSize" },
+          { "$ref": "#/components/parameters/NextPageToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of group administrators.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "admins": {
+                          "type": "array",
+                          "items": { "$ref": "#/components/schemas/User" },
+                          "description": "Administrator entries. `id` may be absent."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      },
+      "post": {
+        "operationId": "addGroupAdmins",
+        "summary": "Add a group administrator",
+        "description": "Client: pkg/zoom/client.go:EnsureGroupAdmin. Required scope: `group:write:administrator:admin` (plus `group:read:administrator:admin` on the ambiguous path). One admin per call. When the returned `ids` does not echo the posted user, the connector walks listGroupAdmins to decide whether the assignment already existed, matching on `id` or, for entries without one, on email.",
+        "tags": ["Groups"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["admins"],
+                "properties": {
+                  "admins": {
+                    "type": "array",
+                    "description": "The connector sends a single-element array containing only `id`. Zoom also accepts `email` when the ID is unknown.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/MembershipMutation" },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/groups/{groupId}/admins/{userId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/GroupId" },
+        { "$ref": "#/components/parameters/UserId" }
+      ],
+      "delete": {
+        "operationId": "deleteGroupAdmin",
+        "summary": "Remove a group administrator",
+        "description": "Client: pkg/zoom/client.go:DeleteGroupAdmin. Required scope: `group:delete:administrator:admin`. Error code 4138 means the user was not an administrator and is treated as already-revoked by the caller.",
+        "tags": ["Groups"],
+        "responses": {
+          "204": { "description": "Removed. No body decoded." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/contacts/groups": {
+      "get": {
+        "operationId": "listContactGroups",
+        "summary": "List contact groups",
+        "description": "Client: pkg/zoom/client.go:GetContactGroups. Required scope: `contact_group:read:list_groups:admin`. Note the response key is `groups`, and each element uses `group_id` / `group_name` rather than `id` / `name`.",
+        "tags": ["Contact Groups"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PageSize" },
+          { "$ref": "#/components/parameters/NextPageToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of contact groups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "groups": { "type": "array", "items": { "$ref": "#/components/schemas/ContactGroup" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/contacts/groups/{groupId}/members": {
+      "parameters": [
+        { "$ref": "#/components/parameters/GroupId" }
+      ],
+      "get": {
+        "operationId": "listContactGroupMembers",
+        "summary": "List a contact group's members",
+        "description": "Client: pkg/zoom/client.go:GetContactGroupMembers. Required scope: `contact_group:read:list_members:admin`. The response key is `group_members`, and a member can be either a user or a user group -- `type` tells them apart.",
+        "tags": ["Contact Groups"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PageSize" },
+          { "$ref": "#/components/parameters/NextPageToken" }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of contact group members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Pagination" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "group_members": { "type": "array", "items": { "$ref": "#/components/schemas/ContactGroupMember" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/roles": {
+      "get": {
+        "operationId": "listRoles",
+        "summary": "List account roles",
+        "description": "Client: pkg/zoom/client.go:GetRoles. Required scope: `role:read:list_roles:admin`. Not paginated -- the connector sends no query parameters and reads the whole `roles` array in one request.",
+        "tags": ["Roles"],
+        "responses": {
+          "200": {
+            "description": "All roles on the account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roles": { "type": "array", "items": { "$ref": "#/components/schemas/Role" } }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/roles/{roleId}/members": {
+      "parameters": [
+        { "$ref": "#/components/parameters/RoleId" }
+      ],
+      "post": {
+        "operationId": "assignRole",
+        "summary": "Assign a role to a user",
+        "description": "Client: pkg/zoom/client.go:AssignRole. Required scope: `role:write:member:admin`. Posts a single member; unlike the group mutations the response body is not decoded, so the connector relies on the status code alone.",
+        "tags": ["Roles"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["members"],
+                "properties": {
+                  "members": {
+                    "type": "array",
+                    "description": "The connector sends a single-element array containing only `id`.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Assigned. The response body is not decoded." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/roles/{roleId}/members/{userId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/RoleId" },
+        { "$ref": "#/components/parameters/UserId" }
+      ],
+      "delete": {
+        "operationId": "unassignRole",
+        "summary": "Unassign a role from a user",
+        "description": "Client: pkg/zoom/client.go:UnassignRole. Required scope: `role:delete:member:admin`. The response body is not decoded.",
+        "tags": ["Roles"],
+        "responses": {
+          "204": { "description": "Unassigned. No body decoded." },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    },
+    "/accounts/me/plans/usage": {
+      "get": {
+        "operationId": "getAccountPlanUsage",
+        "summary": "Get base-plan seat usage",
+        "description": "Client: pkg/zoom/client.go:GetAccountPlanUsage. Required scope: `billing:read:plan_usage:admin`. The path is fixed on the `me` account alias. Only `plan_base` is decoded; Zoom also returns recording, room, webinar, and other plan blocks that the connector deliberately ignores.",
+        "tags": ["Billing"],
+        "responses": {
+          "200": {
+            "description": "Plan usage for the account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "plan_base": { "$ref": "#/components/schemas/PlanBase" }
+                  }
+                }
+              }
+            }
+          },
+          "4XX": { "$ref": "#/components/responses/APIError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Access token from the account-credentials exchange, sent as `Authorization: Bearer <token>`."
+      },
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "Zoom OAuth client ID and secret, used only on the token endpoint."
+      }
+    },
+    "parameters": {
+      "PageSize": {
+        "name": "page_size",
+        "in": "query",
+        "required": false,
+        "description": "Records per page. The connector always sends 50 (pkg/zoom/helpers.go:resourcePageSize).",
+        "schema": { "type": "integer", "default": 50 }
+      },
+      "NextPageToken": {
+        "name": "next_page_token",
+        "in": "query",
+        "required": false,
+        "description": "Opaque page token from the previous response; omitted on the first request. Zoom expires these after 15 minutes.",
+        "schema": { "type": "string" }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Zoom user ID. The connector passes the canonical `id`, never an email.",
+        "schema": { "type": "string" }
+      },
+      "GroupId": {
+        "name": "groupId",
+        "in": "path",
+        "required": true,
+        "description": "Group ID -- the user group's `id` for /groups paths, or the contact group's `group_id` for /contacts/groups paths.",
+        "schema": { "type": "string" }
+      },
+      "RoleId": {
+        "name": "roleId",
+        "in": "path",
+        "required": true,
+        "description": "Role ID as returned by listRoles.",
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "APIError": {
+        "description": "Zoom's structured error envelope, decoded into pkg/zoom.APIError. The raw body and status code are preserved alongside the parsed fields so callers can match on specific codes.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/APIError" }
+          }
+        }
+      },
+      "MembershipMutation": {
+        "description": "Zoom's group member/admin add response. `ids` is a comma-delimited list of the IDs the call actually created, so it is empty when the call created nothing -- which is why the connector treats a 201 as inconclusive and verifies membership separately.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/MembershipMutation" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Pagination": {
+        "type": "object",
+        "description": "Zoom's standard page metadata (pkg/zoom.PaginationData). Only `next_page_token` drives the connector's paging.",
+        "properties": {
+          "next_page_token": { "type": "string", "description": "Empty on the last page." },
+          "page_size": { "type": "integer" },
+          "total_records": { "type": "integer" }
+        }
+      },
+      "UserType": {
+        "type": "integer",
+        "enum": [1, 2, 4, 99],
+        "description": "License tier: 1 Basic, 2 Licensed, 4 Unassigned without Meetings Basic, 99 None. Enum taken from Zoom's current users reference as cited in pkg/zoom/models.go; Zoom's 2018 published spec still lists the retired 1/2/3 set."
+      },
+      "PatchableUserType": {
+        "type": "integer",
+        "enum": [1, 2, 4],
+        "description": "The license tiers the connector can assign via PATCH /users/{userId}. Type 99 (None) is excluded because Zoom only accepts it through the ssoCreate action."
+      },
+      "User": {
+        "type": "object",
+        "description": "The user projection this connector decodes (pkg/zoom.User). Used for listUsers, getUser, createUser confirmation, and the group administrators list -- not every field is populated on every endpoint.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Canonical user ID; the Baton user resource ID. Absent on some group-administrator entries, which the connector detects and falls back to email matching."
+          },
+          "email": { "type": "string", "description": "Primary email and login." },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" },
+          "display_name": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/UserType" },
+          "status": {
+            "type": "string",
+            "enum": ["active", "inactive", "pending"],
+            "description": "Mapped to the Baton user status; `pending` users are surfaced as invite resources instead of users."
+          },
+          "role_id": { "type": "string", "description": "Role assignment used to build the role grants." },
+          "role_name": { "type": "string" },
+          "group_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Group memberships. Read after an ambiguous group-member add to decide whether the user already belonged."
+          }
+        }
+      },
+      "Group": {
+        "type": "object",
+        "description": "A user group (pkg/zoom.Group). Zoom also returns total_members, which the connector ignores.",
+        "properties": {
+          "id": { "type": "string", "description": "Baton group resource ID." },
+          "name": { "type": "string" }
+        }
+      },
+      "ContactGroup": {
+        "type": "object",
+        "description": "A contact group (pkg/zoom.ContactGroup).",
+        "properties": {
+          "group_id": { "type": "string", "description": "Baton contact-group resource ID." },
+          "group_name": { "type": "string" },
+          "group_privacy": {
+            "type": "integer",
+            "enum": [1, 2, 3],
+            "description": "1 visible and searchable by anyone; 2 visible to members only, searchable by anyone; 3 visible and searchable by members only."
+          },
+          "description": { "type": "string" }
+        }
+      },
+      "ContactGroupMember": {
+        "type": "object",
+        "description": "A contact group member (pkg/zoom.GroupMember), which may be a user or a user group.",
+        "properties": {
+          "id": { "type": "string", "description": "User ID when type is 1, user group ID when type is 2. Source of the contact-group membership grants." },
+          "name": { "type": "string" },
+          "type": {
+            "type": "integer",
+            "enum": [1, 2],
+            "description": "1 user; 2 user group."
+          }
+        }
+      },
+      "Role": {
+        "type": "object",
+        "description": "An account role (pkg/zoom.Role).",
+        "properties": {
+          "id": { "type": "string", "description": "Baton role resource ID and the path parameter for the assignment operations." },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "type": { "type": "string" }
+        }
+      },
+      "MembershipMutation": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "string",
+            "description": "Comma-delimited IDs that this call created. Empty when nothing was created. Matched with exact token comparison so `user-1` does not match `user-10`."
+          },
+          "added_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Returned by Zoom but not decoded by the connector."
+          }
+        }
+      },
+      "PlanBase": {
+        "type": "object",
+        "description": "The base-plan slot (pkg/zoom.PlanBase).",
+        "properties": {
+          "type": { "type": "string", "description": "Base plan identifier." },
+          "hosts": { "type": "integer", "description": "Purchased Licensed seats." },
+          "usage": { "type": "integer", "description": "Consumed Licensed seats." },
+          "pending": { "type": "integer", "description": "Seats queued by an admin but not yet applied." }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "description": "Zoom error code. Matched by callers: 1001 user not found, 1005 email already exists, 4131 group member not found, 4138 group admin not found, 4711 missing scope."
+          },
+          "message": { "type": "string" }
+        }
+      },
+      "OAuthError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "`invalid_client` and `invalid_grant` on a 400 are mapped to an Unauthenticated status."
+          },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}
