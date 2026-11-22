@@ -3,10 +3,14 @@ package connector
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-zoom/pkg/zoom"
+	"google.golang.org/grpc/codes"
 )
 
 type inviteResourceType struct {
@@ -71,6 +75,34 @@ func (i *inviteResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ r
 
 func (i *inviteResourceType) Grants(_ context.Context, _ *v2.Resource, _ resource.SyncOpAttrs) ([]*v2.Grant, *resource.SyncOpResults, error) {
 	return nil, &resource.SyncOpResults{}, nil
+}
+
+func (i *inviteResourceType) Delete(ctx context.Context, principal *v2.ResourceId) (annotations.Annotations, error) {
+	if principal.GetResourceType() != resourceTypeInvite.Id || principal.GetResource() == "" {
+		return nil, uhttp.WrapErrors(codes.InvalidArgument, "baton-zoom: delete invite: a non-empty invite resource ID is required")
+	}
+	email := principal.GetResource()
+	user, annos, err := i.client.GetUser(ctx, email)
+	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return annos, nil
+		}
+		return annos, fmt.Errorf("baton-zoom: get pending invite %s: %w", email, err)
+	}
+	if user.Status != userStatusPending {
+		return annos, uhttp.WrapErrors(codes.FailedPrecondition, "baton-zoom: delete invite: user is no longer pending; refusing to disassociate")
+	}
+
+	// Zoom has no conditional delete: this best-effort preflight cannot prevent
+	// disassociation if the user accepts the invitation between GET and DELETE.
+	err = i.client.DeleteUser(ctx, email, zoom.DeleteUserOptions{Action: zoom.Disassociate})
+	if err != nil {
+		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
+			return annos, nil
+		}
+		return annos, fmt.Errorf("baton-zoom: delete pending invite %s: %w", email, err)
+	}
+	return annos, nil
 }
 
 func inviteBuilder(client *zoom.Client) *inviteResourceType {

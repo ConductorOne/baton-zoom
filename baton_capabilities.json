@@ -109,6 +109,12 @@
             "permissions": [
               {
                 "permission": "user:read:list_users:admin"
+              },
+              {
+                "permission": "user:read:user:admin"
+              },
+              {
+                "permission": "user:delete:user:admin"
               }
             ]
           },
@@ -121,12 +127,19 @@
         ]
       },
       "capabilities": [
-        "CAPABILITY_SYNC"
+        "CAPABILITY_SYNC",
+        "CAPABILITY_RESOURCE_DELETE"
       ],
       "permissions": {
         "permissions": [
           {
             "permission": "user:read:list_users:admin"
+          },
+          {
+            "permission": "user:read:user:admin"
+          },
+          {
+            "permission": "user:delete:user:admin"
           }
         ]
       },

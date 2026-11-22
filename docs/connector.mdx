@@ -22,13 +22,15 @@ This connector works with Zoom on the Pro, Business, Business Plus, or Enterpris
 | Roles          | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Licenses       | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 | Contact groups | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |                                                               |
-| Invites        | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |                                                               |
+| Invites        | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> | <Icon icon="square-check" iconType="solid"  color="#c937ae"/> |
 
 {/* AUTO-GENERATED:END - capabilities */}
 
 When a resource type is excluded from the connector's sync, C1 does not emit grants that target it.
 
 Invites represent pending Zoom user invitations and are transient — they disappear once the invitee accepts. C1 syncs invites for visibility but skips sync anomaly detection on them, since their counts naturally fluctuate.
+
+Deleting an invite checks the user's current status with `GET /users/{email}`, then removes a pending invitation with `DELETE /users/{email}?action=disassociate`. Users whose status is not pending are refused, and an already-missing user is treated as success. This requires `user:read:user:admin` and `user:delete:user:admin`. The status check is best effort: if the user accepts between the check and removal, Zoom can disassociate the newly active user.
 
 The Zoom connector supports [automatic account provisioning](/product/admin/account-provisioning).
 
@@ -105,7 +107,7 @@ If you want to use C1 to provision and deprovision Zoom permissions, or to run t
 - group:delete:member:admin
 - user:write:user:admin _(create users)_
 - user:update:user:admin _(required to assign/revoke a license tier)_
-- user:delete:user:admin _(delete users; also required for the `transfer_and_delete_user` connector action)_
+- user:delete:user:admin _(delete users and pending invitations; also required for the `transfer_and_delete_user` connector action)_
 - group:write:administrator:admin
 - group:delete:administrator:admin
 
