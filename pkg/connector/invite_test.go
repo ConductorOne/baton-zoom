@@ -81,6 +81,7 @@ func TestInviteDelete(t *testing.T) {
 			annos, err := builder.Delete(t.Context(), &v2.ResourceId{ResourceType: resourceTypeInvite.Id, Resource: email})
 			if tt.wantError {
 				require.Error(t, err)
+				assert.NotContains(t, err.Error(), email)
 				if tt.wantCode != codes.OK {
 					assert.Equal(t, tt.wantCode, status.Code(err))
 					assert.Contains(t, err.Error(), "refusing to disassociate")

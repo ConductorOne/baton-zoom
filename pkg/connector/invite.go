@@ -87,7 +87,7 @@ func (i *inviteResourceType) Delete(ctx context.Context, principal *v2.ResourceI
 		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 			return annos, nil
 		}
-		return annos, fmt.Errorf("baton-zoom: get pending invite %s: %w", email, err)
+		return annos, fmt.Errorf("baton-zoom: get pending invite: %w", err)
 	}
 	if user.Status != userStatusPending {
 		return annos, uhttp.WrapErrors(codes.FailedPrecondition, "baton-zoom: delete invite: user is no longer pending; refusing to disassociate")
@@ -100,7 +100,7 @@ func (i *inviteResourceType) Delete(ctx context.Context, principal *v2.ResourceI
 		if zoom.IsAPIError(err, http.StatusNotFound, zoom.UserNotFoundErrorCode) {
 			return annos, nil
 		}
-		return annos, fmt.Errorf("baton-zoom: delete pending invite %s: %w", email, err)
+		return annos, fmt.Errorf("baton-zoom: delete pending invite: %w", err)
 	}
 	return annos, nil
 }
