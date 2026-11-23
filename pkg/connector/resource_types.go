@@ -90,7 +90,7 @@ var (
 			v2.ResourceType_TRAIT_USER,
 		},
 		Annotations: annotations.New(
-			capabilityPermissions(scopeUserReadList),
+			capabilityPermissions(scopeUserReadList, scopeUserRead, scopeUserDelete),
 			&v2.SkipEntitlementsAndGrants{},
 			&v2.SkipSyncAnomalyDetection{},
 		),
